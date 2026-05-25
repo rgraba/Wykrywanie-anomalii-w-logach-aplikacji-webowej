@@ -6,8 +6,13 @@ W projekcie wykorzystano dataset **CSIC 2010 Web Application Attacks**.
 
 Plik z danymi znajduje się w katalogu: data/csic_database.csv
 
+Pliki z wynikami, oraz porównaniem wynikiem wyników znajduję odpowiednio w folderach: 
+sources/
+result tables/
+
 Dataset zawiera żądania HTTP opisane m.in. przez metodę HTTP, URL, treść żądania oraz etykietę klasyfikacyjną.
 
+```text
 Problem został sprowadzony do klasyfikacji binarnej:
 
 0 — ruch normalny
