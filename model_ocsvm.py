@@ -9,7 +9,6 @@ from data_processor import get_processed_data
 
 
 def train_ocsvm() -> None:
-
     print("Wczytywanie danych...")
 
     try:

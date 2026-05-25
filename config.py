@@ -12,7 +12,6 @@ ARTIFACTS_DIR = BASE_DIR / "artifacts"
 
 DATA_FILE = DATA_DIR / "csic_database.csv"
 
-
 # Dataset columns
 
 BASE_COLUMNS = [

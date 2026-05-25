@@ -6,9 +6,7 @@ W projekcie wykorzystano dataset **CSIC 2010 Web Application Attacks**.
 
 Plik z danymi znajduje się w katalogu: data/csic_database.csv
 
-Pliki z wynikami, oraz porównaniem wynikiem wyników znajduję odpowiednio w folderach: 
-sources/
-result tables/
+Pliki z wynikami znajdują się w folderze `result tables/`, natomiast źródła literaturowe wykorzystane do porównania znajdują się w folderze `sources/`.
 
 Dataset zawiera żądania HTTP opisane m.in. przez metodę HTTP, URL, treść żądania oraz etykietę klasyfikacyjną.
 
@@ -49,7 +47,7 @@ project/
 │   └── csic_database.csv
 ├── models/
 ├── reports/
-├── wyniki/
+├── results/
 ├── config.py
 ├── data_processor.py
 ├── model_rand_forest.py

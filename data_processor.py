@@ -3,7 +3,6 @@ import config
 
 
 def load_data() -> pd.DataFrame:
-
     print(f"Wczytywanie pliku: {config.DATA_FILE}...")
 
     try:
@@ -32,7 +31,6 @@ def load_data() -> pd.DataFrame:
 
 
 def clean_data(df: pd.DataFrame) -> pd.DataFrame:
-
     print("Czyszczenie danych...")
 
     df = df.copy()
@@ -47,7 +45,6 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def count_special_chars(text: str) -> int:
-
     if not isinstance(text, str):
         return 0
 
@@ -55,7 +52,6 @@ def count_special_chars(text: str) -> int:
 
 
 def add_length_features(df: pd.DataFrame) -> pd.DataFrame:
-
     df = df.copy()
 
     df["url_len"] = df["URL"].str.len()
@@ -65,7 +61,6 @@ def add_length_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_special_char_features(df: pd.DataFrame) -> pd.DataFrame:
-
     df = df.copy()
 
     df["url_special_chars"] = df["URL"].apply(count_special_chars)
@@ -75,7 +70,6 @@ def add_special_char_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_security_flags(df: pd.DataFrame) -> pd.DataFrame:
-
     df = df.copy()
 
     combined_text = df["URL"].astype(str) + " " + df["content"].astype(str)
@@ -99,7 +93,6 @@ def add_security_flags(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def encode_labels(df: pd.DataFrame) -> pd.DataFrame:
-
     df = df.copy()
 
     anomaly_labels = {"anomaly", "anomalous", "attack", "malicious", "1"}
@@ -112,7 +105,6 @@ def encode_labels(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def extract_features(df: pd.DataFrame) -> pd.DataFrame:
-
     print("Ekstrakcja cech...")
 
     df = add_length_features(df)
@@ -124,7 +116,6 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_processed_data() -> pd.DataFrame:
-
     print("\nStart przetwarzania danych")
 
     df = load_data()
@@ -147,4 +138,5 @@ if __name__ == "__main__":
         print("Przetwarzanie przerwane.")
 
         import traceback
+
         traceback.print_exc()

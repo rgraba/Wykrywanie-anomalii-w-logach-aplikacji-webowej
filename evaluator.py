@@ -17,7 +17,6 @@ from sklearn.metrics import (
 
 import config
 
-
 MODELS_TO_EVALUATE = {
     "Isolation Forest": {
         "model_file": "iforest_model.pkl",
@@ -38,7 +37,6 @@ MODELS_TO_EVALUATE = {
 
 
 def load_model_and_test_data(model_file: str, test_file: str):
-
     model_path = config.MODELS_DIR / model_file
     test_data_path = config.MODELS_DIR / test_file
 
@@ -49,7 +47,6 @@ def load_model_and_test_data(model_file: str, test_file: str):
 
 
 def predict_labels(model, X_test, model_type: str):
-
     # 0: normalny ruch, 1: anomalia / atak.
 
     if model_type == "classifier":
@@ -63,7 +60,6 @@ def predict_labels(model, X_test, model_type: str):
 
 
 def get_model_scores(model, X_test, model_type: str):
-
     if model_type == "classifier":
         if hasattr(model, "predict_proba"):
             return model.predict_proba(X_test)[:, 1]
@@ -86,7 +82,6 @@ def get_model_scores(model, X_test, model_type: str):
 
 
 def calculate_metrics(model_name: str, y_true, y_pred, y_score=None) -> dict:
-
     metrics = {
         "Model": model_name,
         "Accuracy": accuracy_score(y_true, y_pred),
@@ -121,7 +116,6 @@ def calculate_metrics(model_name: str, y_true, y_pred, y_score=None) -> dict:
 
 
 def plot_confusion_matrices(results: dict) -> None:
-
     config.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
     fig, axes = plt.subplots(
@@ -160,7 +154,6 @@ def plot_confusion_matrices(results: dict) -> None:
 
 
 def plot_roc_curves(results: dict) -> None:
-
     config.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
     plt.figure(figsize=(8, 6))
@@ -203,7 +196,6 @@ def plot_roc_curves(results: dict) -> None:
 
 
 def evaluate_models() -> None:
-
     print("Rozpoczynanie ewaluacji modeli...")
 
     config.REPORTS_DIR.mkdir(parents=True, exist_ok=True)

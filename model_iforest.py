@@ -7,7 +7,6 @@ from data_processor import get_processed_data
 
 
 def train_isolation_forest() -> None:
-
     print("Wczytywanie danych...")
 
     try:
