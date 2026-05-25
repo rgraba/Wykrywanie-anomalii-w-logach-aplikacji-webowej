@@ -7,7 +7,6 @@ venv/
 .idea/
 .vscode/
 
-data/
 models/
 reports/
 artifacts/
