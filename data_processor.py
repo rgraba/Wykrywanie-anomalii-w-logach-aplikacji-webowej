@@ -44,6 +44,18 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_request_text(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    df["request_text"] = (
+        df["Method"].fillna("").astype(str) + " " +
+        df["URL"].fillna("").astype(str) + " " +
+        df["content"].fillna("").astype(str)
+    )
+
+    return df
+
+
 def count_special_chars(text: str) -> int:
     if not isinstance(text, str):
         return 0
@@ -110,6 +122,7 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_length_features(df)
     df = add_special_char_features(df)
     df = add_security_flags(df)
+    df = add_request_text(df)
     df = encode_labels(df)
 
     return df
