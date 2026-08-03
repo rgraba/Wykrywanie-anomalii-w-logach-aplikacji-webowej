@@ -86,3 +86,6 @@ OCSVM_PARAMS = {
     "gamma": "scale",
     "nu": 0.3
 }
+
+SPLITS_DIR = BASE_DIR / "splits"
+GROUP_SPLIT_FILE = SPLITS_DIR / "group_split_seed_42.csv"
