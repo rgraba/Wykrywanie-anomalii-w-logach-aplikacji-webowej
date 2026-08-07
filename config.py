@@ -40,6 +40,27 @@ ML_FEATURES_BASIC = [
     "content_special_chars"
 ]
 
+ML_FEATURES_ALTHUBITI_9 = [
+    "request_length",
+    "arguments_length",
+    "arguments_count",
+    "arguments_digit_count",
+    "path_length",
+    "arguments_letter_count",
+    "path_letter_count",
+    "path_special_char_count",
+    "max_request_byte",
+]
+
+
+ML_FEATURES_ALTHUBITI_5 = [
+    "request_length",
+    "arguments_length",
+    "arguments_count",
+    "path_length",
+    "path_special_char_count",
+]
+
 ML_FEATURES = ML_FEATURES_BASIC
 
 # Security patterns

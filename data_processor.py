@@ -1,6 +1,6 @@
 import pandas as pd
 import config
-
+from litaratura_features_1 import add_althubiti_features
 
 def load_data() -> pd.DataFrame:
     print(f"Wczytywanie pliku: {config.DATA_FILE}...")
@@ -123,6 +123,10 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_special_char_features(df)
     df = add_security_flags(df)
     df = add_request_text(df)
+
+    # Cechy z publikacji Althubiti et al.
+    df = add_althubiti_features(df)
+
     df = encode_labels(df)
 
     return df
