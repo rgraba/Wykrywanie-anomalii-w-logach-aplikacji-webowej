@@ -1,0 +1,353 @@
+from time import perf_counter
+
+import numpy as np
+import pandas as pd
+
+from sklearn.ensemble import IsolationForest
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import OneClassSVM
+
+import config
+
+from data_processor import get_processed_data
+
+from compare_rf_selekcja_cech import (
+    calculate_metrics,
+    select_with_information_gain,
+    select_with_random_forest,
+)
+
+
+def evaluate_one_class_model(
+    df: pd.DataFrame,
+    model_name: str,
+    feature_set_name: str,
+    features: list[str],
+    train_indices,
+    test_indices,
+) -> dict:
+
+    X_train = df.loc[
+        train_indices,
+        features,
+    ]
+
+    y_train = df.loc[
+        train_indices,
+        "classification",
+    ]
+
+    X_test = df.loc[
+        test_indices,
+        features,
+    ]
+
+    y_test = df.loc[
+        test_indices,
+        "classification",
+    ]
+
+    # Modele jednoklasowe uczymy wyłącznie
+    # na normalnych żądaniach.
+    X_train_normal = X_train.loc[
+        y_train == 0
+    ]
+
+    scaler = StandardScaler()
+
+    X_train_normal_scaled = scaler.fit_transform(
+        X_train_normal
+    )
+
+    X_test_scaled = scaler.transform(
+        X_test
+    )
+
+    if model_name == "ISOLATION_FOREST":
+        model = IsolationForest(
+            **config.ISOLATION_FOREST_PARAMS,
+            random_state=config.RANDOM_STATE,
+            n_jobs=-1,
+        )
+
+    elif model_name == "ONE_CLASS_SVM":
+        model = OneClassSVM(
+            **config.OCSVM_PARAMS,
+        )
+
+    else:
+        raise ValueError(
+            f"Nieznany model: {model_name}"
+        )
+
+    training_start = perf_counter()
+
+    model.fit(
+        X_train_normal_scaled
+    )
+
+    training_time = (
+        perf_counter() - training_start
+    )
+
+    prediction_start = perf_counter()
+
+    raw_predictions = model.predict(
+        X_test_scaled
+    )
+
+    # sklearn:
+    #  1 = obserwacja normalna
+    # -1 = anomalia
+    #
+    # Projekt:
+    # 0 = normalna
+    # 1 = anomalia
+    y_pred = np.where(
+        raw_predictions == -1,
+        1,
+        0,
+    )
+
+    # Większa wartość oznacza większe
+    # prawdopodobieństwo anomalii.
+    y_score = -model.decision_function(
+        X_test_scaled
+    )
+
+    prediction_time = (
+        perf_counter() - prediction_start
+    )
+
+    metrics = calculate_metrics(
+        y_true=y_test,
+        y_pred=y_pred,
+        y_score=y_score,
+    )
+
+    metrics["model"] = model_name
+    metrics["feature_set"] = feature_set_name
+    metrics["number_of_features"] = len(features)
+    metrics["selected_features"] = ", ".join(
+        features
+    )
+    metrics["normal_training_samples"] = len(
+        X_train_normal
+    )
+    metrics["test_samples"] = len(X_test)
+    metrics["training_time_seconds"] = (
+        training_time
+    )
+    metrics["prediction_time_seconds"] = (
+        prediction_time
+    )
+
+    return metrics
+
+
+def compare_one_class_feature_sets() -> None:
+    print("Wczytywanie danych...")
+
+    df = get_processed_data()
+
+    y = df["classification"]
+
+    train_indices, test_indices = (
+        train_test_split(
+            df.index,
+            test_size=0.4,
+            random_state=config.RANDOM_STATE,
+            stratify=y,
+        )
+    )
+
+    X_selection_train = df.loc[
+        train_indices,
+        config.ML_FEATURES_ALTHUBITI_9,
+    ]
+
+    y_selection_train = df.loc[
+        train_indices,
+        "classification",
+    ]
+
+    print("\nSelekcja cech wyłącznie na treningu...")
+
+    ig_features, _ = (
+        select_with_information_gain(
+            X_selection_train,
+            y_selection_train,
+        )
+    )
+
+    rf_features, _ = (
+        select_with_random_forest(
+            X_selection_train,
+            y_selection_train,
+        )
+    )
+
+    print(f"Cechy IG: {ig_features}")
+    print(f"Cechy RF: {rf_features}")
+
+    feature_sets = {
+        "BASIC": config.ML_FEATURES_BASIC,
+        "ALTHUBITI_9": (
+            config.ML_FEATURES_ALTHUBITI_9
+        ),
+    }
+
+    if ig_features == rf_features:
+        feature_sets["IG_RF_SELECTED"] = (
+            ig_features
+        )
+    else:
+        feature_sets["INFORMATION_GAIN"] = (
+            ig_features
+        )
+        feature_sets["RF_IMPORTANCE"] = (
+            rf_features
+        )
+
+    model_names = [
+        "ISOLATION_FOREST",
+        "ONE_CLASS_SVM",
+    ]
+
+    normal_training_samples = int(
+        (
+            df.loc[
+                train_indices,
+                "classification",
+            ]
+            == 0
+        ).sum()
+    )
+
+    print("\n" + "=" * 75)
+    print("PROTOKÓŁ EKSPERYMENTALNY")
+    print("=" * 75)
+    print("Podział: 60% trening / 40% test")
+    print(f"Seed: {config.RANDOM_STATE}")
+    print(
+        "Normalne próbki treningowe: "
+        f"{normal_training_samples}"
+    )
+    print(
+        f"Liczba próbek testowych: "
+        f"{len(test_indices)}"
+    )
+
+    metrics_rows = []
+
+    for model_name in model_names:
+        for feature_set_name, features in (
+            feature_sets.items()
+        ):
+            print("\n" + "=" * 75)
+            print(
+                f"{model_name} — "
+                f"{feature_set_name}"
+            )
+            print("=" * 75)
+            print(f"Cechy: {features}")
+
+            metrics = evaluate_one_class_model(
+                df=df,
+                model_name=model_name,
+                feature_set_name=feature_set_name,
+                features=features,
+                train_indices=train_indices,
+                test_indices=test_indices,
+            )
+
+            metrics_rows.append(metrics)
+
+            print(
+                f"Accuracy: "
+                f"{metrics['accuracy']:.4f}"
+            )
+            print(
+                f"Balanced Accuracy: "
+                f"{metrics['balanced_accuracy']:.4f}"
+            )
+            print(
+                f"Precision anomaly: "
+                f"{metrics['precision_anomaly']:.4f}"
+            )
+            print(
+                f"Recall anomaly: "
+                f"{metrics['recall_anomaly']:.4f}"
+            )
+            print(
+                f"F1 anomaly: "
+                f"{metrics['f1_anomaly']:.4f}"
+            )
+            print(
+                f"ROC AUC: "
+                f"{metrics['roc_auc']:.4f}"
+            )
+            print(
+                f"PR AUC: "
+                f"{metrics['pr_auc']:.4f}"
+            )
+            print(
+                f"False-positive rate: "
+                f"{metrics['false_positive_rate']:.4f}"
+            )
+
+    metrics_df = pd.DataFrame(
+        metrics_rows
+    )
+
+    config.REPORTS_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    output_path = (
+        config.REPORTS_DIR
+        / "one_class_literature_features_60_40.csv"
+    )
+
+    metrics_df.to_csv(
+        output_path,
+        index=False,
+    )
+
+    columns_to_display = [
+        "model",
+        "feature_set",
+        "number_of_features",
+        "accuracy",
+        "balanced_accuracy",
+        "precision_anomaly",
+        "recall_anomaly",
+        "f1_anomaly",
+        "false_positive_rate",
+        "roc_auc",
+        "pr_auc",
+        "training_time_seconds",
+    ]
+
+    print("\n" + "=" * 75)
+    print("PORÓWNANIE MODELI JEDNOKLASOWYCH")
+    print("=" * 75)
+
+    print(
+        metrics_df[
+            columns_to_display
+        ].round(4).to_string(
+            index=False
+        )
+    )
+
+    print(
+        f"\nWyniki zapisano w: "
+        f"{output_path}"
+    )
+
+
+if __name__ == "__main__":
+    compare_one_class_feature_sets()
