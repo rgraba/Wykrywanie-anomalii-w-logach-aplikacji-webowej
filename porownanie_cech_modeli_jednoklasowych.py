@@ -1,19 +1,18 @@
 from time import perf_counter
 
-import numpy as np
 import pandas as pd
-
 from sklearn.ensemble import IsolationForest
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 
 import config
-
-from data_processor import get_processed_data
-
-from compare_rf_selekcja_cech import (
-    calculate_metrics,
+from metryki import (
+    calculate_binary_metrics,
+    convert_one_class_predictions,
+)
+from przetwarzanie_danych import get_processed_data
+from selekcja_cech import (
     select_with_information_gain,
     select_with_random_forest,
 )
@@ -97,11 +96,7 @@ def evaluate_one_class_model(
     )
 
 
-    y_pred = np.where(
-        raw_predictions == -1,
-        1,
-        0,
-    )
+    y_pred = convert_one_class_predictions(raw_predictions)
 
 
     y_score = -model.decision_function(
@@ -112,7 +107,7 @@ def evaluate_one_class_model(
         perf_counter() - prediction_start
     )
 
-    metrics = calculate_metrics(
+    metrics = calculate_binary_metrics(
         y_true=y_test,
         y_pred=y_pred,
         y_score=y_score,
@@ -139,8 +134,6 @@ def evaluate_one_class_model(
 
 
 def compare_one_class_feature_sets() -> None:
-    print("Wczytywanie danych...")
-
     df = get_processed_data()
 
     y = df["classification"]

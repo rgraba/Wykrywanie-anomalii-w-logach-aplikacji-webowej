@@ -1,5 +1,5 @@
-from data_processor import get_processed_data
-from split_manager import create_and_save_group_split
+from przetwarzanie_danych import get_processed_data
+from podzial_danych import create_and_save_group_split
 
 
 def prepare_splits() -> None:

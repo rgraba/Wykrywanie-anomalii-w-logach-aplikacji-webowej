@@ -1,9 +1,9 @@
 import pandas as pd
 import config
-from litaratura_features_1 import add_althubiti_features
+from cechy_literaturowe import add_althubiti_features
 
 def load_data() -> pd.DataFrame:
-    print(f"Wczytywanie pliku: {config.DATA_FILE}...")
+    print(f"Wczytywanie danych z pliku: {config.DATA_FILE}...")
 
     try:
         df = pd.read_csv(config.DATA_FILE)
@@ -18,7 +18,7 @@ def load_data() -> pd.DataFrame:
 
         df = df[config.BASE_COLUMNS].copy()
 
-        print(f"Wczytano pomyślnie. Kształt: {df.shape}")
+        print(f"Wczytano dane. Kształt: {df.shape}")
         return df
 
     except FileNotFoundError:
@@ -124,7 +124,6 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_security_flags(df)
     df = add_request_text(df)
 
-    # Cechy z publikacji Althubiti et al.
     df = add_althubiti_features(df)
 
     df = encode_labels(df)
@@ -133,13 +132,13 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_processed_data() -> pd.DataFrame:
-    print("\nStart przetwarzania danych")
+    print("\nRozpoczęto przetwarzanie danych.")
 
     df = load_data()
     df = clean_data(df)
     df = extract_features(df)
 
-    print("Zakończono przetwarzanie danych\n")
+    print("Zakończono przetwarzanie danych.\n")
 
     return df
 

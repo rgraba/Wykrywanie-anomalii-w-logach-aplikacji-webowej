@@ -1,56 +1,14 @@
 import pandas as pd
-
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import (
-    accuracy_score,
-    balanced_accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-)
 
 import config
-
-from data_processor import get_processed_data
-from split_manager import (
+from metryki import calculate_binary_metrics
+from podzial_danych import (
     add_request_groups,
     create_random_split,
     load_group_split,
 )
-
-
-def calculate_metrics(
-    y_true,
-    y_pred,
-    y_score,
-) -> dict:
-    return {
-        "accuracy": accuracy_score(y_true, y_pred),
-        "balanced_accuracy": balanced_accuracy_score(
-            y_true,
-            y_pred,
-        ),
-        "precision_anomaly": precision_score(
-            y_true,
-            y_pred,
-            pos_label=1,
-            zero_division=0,
-        ),
-        "recall_anomaly": recall_score(
-            y_true,
-            y_pred,
-            pos_label=1,
-            zero_division=0,
-        ),
-        "f1_anomaly": f1_score(
-            y_true,
-            y_pred,
-            pos_label=1,
-            zero_division=0,
-        ),
-        "roc_auc": roc_auc_score(y_true, y_score),
-    }
+from przetwarzanie_danych import get_processed_data
 
 
 def run_rf_experiment(
@@ -81,7 +39,7 @@ def run_rf_experiment(
     y_pred = model.predict(X_test)
     y_score = model.predict_proba(X_test)[:, 1]
 
-    results = calculate_metrics(
+    results = calculate_binary_metrics(
         y_test,
         y_pred,
         y_score,

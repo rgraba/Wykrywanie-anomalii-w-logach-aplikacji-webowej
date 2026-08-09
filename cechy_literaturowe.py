@@ -1,8 +1,6 @@
 import re
 from urllib.parse import urlsplit
-
 import pandas as pd
-
 import config
 
 
@@ -147,49 +145,49 @@ def add_althubiti_features(
         index=result.index,
     )
 
-    # 1. Length of the request
+    # Długość żądania
     result["request_length"] = (
         result["request_text"]
         .astype(str)
         .str.len()
     )
 
-    # 2. Length of the arguments
+    # Długość argumentów
     result["arguments_length"] = (
         arguments.str.len()
     )
 
-    # 3. Number of arguments
+    # Liczba argumentów
     result["arguments_count"] = (
         arguments.apply(count_arguments)
     )
 
-    # 4. Number of digits in the arguments
+    # Liczba cyfr w argumentach
     result["arguments_digit_count"] = (
         arguments.apply(count_digits)
     )
 
-    # 5. Length of the path
+    # Długość ścieżki
     result["path_length"] = (
         paths.astype(str).str.len()
     )
 
-    # 6. Number of letters in the arguments
+    # Liczba liter w argumentach
     result["arguments_letter_count"] = (
         arguments.apply(count_letters)
     )
 
-    # 7. Number of letters in the path
+    # Liczba liter w ścieżce
     result["path_letter_count"] = (
         paths.apply(count_letters)
     )
 
-    # 8. Number of special characters in the path
+    # Liczba znaków specjalnych w ścieżce
     result["path_special_char_count"] = (
         paths.apply(count_special_chars)
     )
 
-    # 9. Maximum byte value in the request
+    # Maksymalna wartość bajtu w żądaniu
     result["max_request_byte"] = (
         result["request_text"].apply(
             calculate_max_byte

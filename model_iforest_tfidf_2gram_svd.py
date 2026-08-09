@@ -1,36 +1,17 @@
+import pandas as pd
 from sklearn.decomposition import TruncatedSVD
 from sklearn.ensemble import IsolationForest
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics import (
-    accuracy_score,
-    balanced_accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score
-)
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 import config
-from data_processor import get_processed_data
-
-
-def convert_if_predictions(raw_predictions):
-
-    return [0 if pred == 1 else 1 for pred in raw_predictions]
-
-
-def evaluate_model(y_test, y_pred, y_score) -> dict:
-    return {
-        "accuracy": accuracy_score(y_test, y_pred),
-        "balanced_accuracy": balanced_accuracy_score(y_test, y_pred),
-        "precision_anomaly": precision_score(y_test, y_pred, pos_label=1, zero_division=0),
-        "recall_anomaly": recall_score(y_test, y_pred, pos_label=1, zero_division=0),
-        "f1_anomaly": f1_score(y_test, y_pred, pos_label=1, zero_division=0),
-        "roc_auc": roc_auc_score(y_test, y_score)
-    }
+from metryki import (
+    calculate_binary_metrics,
+    convert_one_class_predictions,
+)
+from przetwarzanie_danych import get_processed_data
 
 
 def train_iforest_tfidf_svd(
@@ -40,8 +21,6 @@ def train_iforest_tfidf_svd(
     contamination=0.4,
     n_estimators=200
 ) -> dict:
-    print("Wczytywanie i przetwarzanie danych...")
-
     df = get_processed_data()
 
     if "request_text" not in df.columns:
@@ -50,7 +29,7 @@ def train_iforest_tfidf_svd(
     X = df["request_text"]
     y = df["classification"]
 
-    print("Dzielenie danych na zbiór treningowy i testowy...")
+    print("Podział danych na zbiór treningowy i testowy...")
 
     X_train, X_test, y_train, y_test = train_test_split(
         X,
@@ -93,11 +72,17 @@ def train_iforest_tfidf_svd(
 
     print("Klasyfikacja próbek testowych...")
     raw_predictions = model.predict(X_test)
-    y_pred = convert_if_predictions(raw_predictions)
+    y_pred = convert_one_class_predictions(
+        raw_predictions
+    )
 
     y_score = -model.decision_function(X_test)
 
-    results = evaluate_model(y_test, y_pred, y_score)
+    results = calculate_binary_metrics(
+        y_test,
+        y_pred,
+        y_score,
+    )
 
     results["model"] = "Isolation Forest"
     results["representation"] = "TF-IDF char 2-gram + SVD"
@@ -107,9 +92,26 @@ def train_iforest_tfidf_svd(
     results["contamination"] = contamination
     results["n_estimators"] = n_estimators
 
+    config.REPORTS_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    output_path = (
+            config.REPORTS_DIR
+            / "isolation_forest_tfidf_2gram_svd.csv"
+    )
+
+    pd.DataFrame([results]).to_csv(
+        output_path,
+        index=False,
+    )
+
     print("\nWyniki:")
     for key, value in results.items():
         print(f"{key}: {value}")
+
+    print(f"\nWyniki zapisano w: {output_path}")
 
     return results
 

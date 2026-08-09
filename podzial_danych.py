@@ -137,7 +137,7 @@ def load_group_split(
     if not config.GROUP_SPLIT_FILE.exists():
         raise FileNotFoundError(
             "Nie znaleziono zapisanego podziału. "
-            "Najpierw uruchom prepare_splits.py."
+            "Najpierw uruchom przygotowanie_podzialu.py."
         )
 
     assignments = pd.read_csv(config.GROUP_SPLIT_FILE)

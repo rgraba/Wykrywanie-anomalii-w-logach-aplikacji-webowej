@@ -4,11 +4,9 @@ import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 
 import config
-
-from data_processor import get_processed_data
-
-from compare_rf_selekcja_cech import (
-    evaluate_feature_set,
+from przetwarzanie_danych import get_processed_data
+from porownanie_selekcji_cech_random_forest import evaluate_feature_set
+from selekcja_cech import (
     select_with_information_gain,
     select_with_l1,
     select_with_random_forest,
@@ -85,8 +83,6 @@ def create_selection_stability(
 
 
 def validate_with_cv10() -> None:
-    print("Wczytywanie danych...")
-
     df = get_processed_data()
 
     y = df["classification"]

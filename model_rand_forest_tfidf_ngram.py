@@ -1,36 +1,18 @@
+import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics import (
-    accuracy_score,
-    balanced_accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score
-)
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
 import config
-from data_processor import get_processed_data
-
-
-def evaluate_model(y_test, y_pred, y_score) -> dict:
-    return {
-        "accuracy": accuracy_score(y_test, y_pred),
-        "balanced_accuracy": balanced_accuracy_score(y_test, y_pred),
-        "precision_anomaly": precision_score(y_test, y_pred, pos_label=1, zero_division=0),
-        "recall_anomaly": recall_score(y_test, y_pred, pos_label=1, zero_division=0),
-        "f1_anomaly": f1_score(y_test, y_pred, pos_label=1, zero_division=0),
-        "roc_auc": roc_auc_score(y_test, y_score)
-    }
+from metryki import calculate_binary_metrics
+from przetwarzanie_danych import get_processed_data
 
 
 def train_rf_tfidf_ngram(
     ngram_range=(3, 3),
     max_features=5000
 ) -> dict:
-    print("Wczytywanie i przetwarzanie danych...")
 
     df = get_processed_data()
 
@@ -40,7 +22,7 @@ def train_rf_tfidf_ngram(
     X = df["request_text"]
     y = df["classification"]
 
-    print("Dzielenie danych na zbiór treningowy i testowy...")
+    print("Podział danych na zbiór treningowy i testowy...")
 
     X_train, X_test, y_train, y_test = train_test_split(
         X,
@@ -76,16 +58,37 @@ def train_rf_tfidf_ngram(
     y_pred = model.predict(X_test)
     y_score = model.predict_proba(X_test)[:, 1]
 
-    results = evaluate_model(y_test, y_pred, y_score)
+    results = calculate_binary_metrics(
+        y_test,
+        y_pred,
+        y_score,
+    )
 
     results["model"] = "Random Forest"
     results["representation"] = "TF-IDF char n-gram"
     results["ngram_range"] = str(ngram_range)
     results["max_features"] = max_features
 
+    config.REPORTS_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    output_path = (
+            config.REPORTS_DIR
+            / "random_forest_tfidf_ngram.csv"
+    )
+
+    pd.DataFrame([results]).to_csv(
+        output_path,
+        index=False,
+    )
+
     print("\nWyniki:")
     for key, value in results.items():
         print(f"{key}: {value}")
+
+    print(f"\nWyniki zapisano w: {output_path}")
 
     return results
 

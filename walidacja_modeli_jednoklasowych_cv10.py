@@ -1,7 +1,6 @@
 import json
 from time import perf_counter
 
-import numpy as np
 import pandas as pd
 
 from sklearn.ensemble import IsolationForest
@@ -10,11 +9,12 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 
 import config
-
-from data_processor import get_processed_data
-
-from compare_rf_selekcja_cech import (
-    calculate_metrics,
+from metryki import (
+    calculate_binary_metrics,
+    convert_one_class_predictions,
+)
+from przetwarzanie_danych import get_processed_data
+from selekcja_cech import (
     select_with_information_gain,
     select_with_random_forest,
 )
@@ -151,11 +151,7 @@ def evaluate_configuration(
         X_test
     )
 
-    y_pred = np.where(
-        raw_predictions == -1,
-        1,
-        0,
-    )
+    y_pred = convert_one_class_predictions(raw_predictions)
 
     y_score = -model.decision_function(
         X_test
@@ -165,7 +161,7 @@ def evaluate_configuration(
         perf_counter() - prediction_start
     )
 
-    metrics = calculate_metrics(
+    metrics = calculate_binary_metrics(
         y_true=y_test,
         y_pred=y_pred,
         y_score=y_score,
@@ -312,8 +308,6 @@ def create_summary(
 
 
 def validate_configs_cv10() -> None:
-    print("Wczytywanie danych...")
-
     df = get_processed_data()
 
     y = df["classification"]

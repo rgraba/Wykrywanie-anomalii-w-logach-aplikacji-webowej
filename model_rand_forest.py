@@ -3,12 +3,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
 import config
-from data_processor import get_processed_data
+from przetwarzanie_danych import get_processed_data
 
 
 def train_random_forest() -> None:
-    print("Wczytywanie danych...")
-
     try:
         df = get_processed_data()
     except Exception as e:
@@ -33,7 +31,7 @@ def train_random_forest() -> None:
     X = df[config.ML_FEATURES]
     y = df["classification"]
 
-    print("Dzielenie danych na zbiór treningowy i testowy...")
+    print("Podział danych na zbiór treningowy i testowy...")
 
     X_train, X_test, y_train, y_test = train_test_split(
         X,
@@ -55,7 +53,7 @@ def train_random_forest() -> None:
 
     print("Trenowanie modelu...")
     model.fit(X_train, y_train)
-    print("Trening modelu zakończony.")
+    print("Zakończono trenowanie modelu.")
 
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -79,7 +77,7 @@ def train_random_forest() -> None:
     for feature, importance in feature_importance:
         print(f"{feature}: {importance:.4f}")
 
-    print("\nZakończono proces.")
+    print("\nZakończono trenowanie Random Forest.")
 
 
 if __name__ == "__main__":

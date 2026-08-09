@@ -1,6 +1,5 @@
 import config
-
-from data_processor import get_processed_data
+from przetwarzanie_danych import get_processed_data
 
 
 def validate_features() -> None:

@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-# Project Paths
+# Ścieżki projektu
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -9,10 +9,12 @@ DATA_DIR = BASE_DIR / "data"
 MODELS_DIR = BASE_DIR / "models"
 REPORTS_DIR = BASE_DIR / "reports"
 ARTIFACTS_DIR = BASE_DIR / "artifacts"
+SPLITS_DIR = BASE_DIR / "splits"
 
+GROUP_SPLIT_FILE = SPLITS_DIR / "group_split_seed_42.csv"
 DATA_FILE = DATA_DIR / "csic_database.csv"
 
-# Dataset columns
+# Kolumny zbioru danych
 
 BASE_COLUMNS = [
     "Method",
@@ -21,7 +23,7 @@ BASE_COLUMNS = [
     "classification"
 ]
 
-# ML features
+# Zestawy cech
 
 ML_FEATURES_ADVANCED = [
     "url_len",
@@ -63,7 +65,7 @@ ML_FEATURES_ALTHUBITI_5 = [
 
 ML_FEATURES = ML_FEATURES_BASIC
 
-# Security patterns
+# Wzorce bezpieczeństwa
 
 SPECIAL_CHARS = "!@#$%^&*()_+{}|:\"<>?-=[]\\;',./"
 
@@ -107,6 +109,3 @@ OCSVM_PARAMS = {
     "gamma": "scale",
     "nu": 0.3
 }
-
-SPLITS_DIR = BASE_DIR / "splits"
-GROUP_SPLIT_FILE = SPLITS_DIR / "group_split_seed_42.csv"

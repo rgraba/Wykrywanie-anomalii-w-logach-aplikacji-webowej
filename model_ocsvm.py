@@ -5,12 +5,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 import config
-from data_processor import get_processed_data
+from przetwarzanie_danych import get_processed_data
 
 
 def train_ocsvm() -> None:
-    print("Wczytywanie danych...")
-
     try:
         df = get_processed_data()
     except Exception as e:
@@ -41,7 +39,7 @@ def train_ocsvm() -> None:
     print("\nRozkład klas procentowo:")
     print(y.value_counts(normalize=True).round(4))
 
-    print("\nDzielenie danych na zbiór treningowy i testowy...")
+    print("\nPodział danych na zbiór treningowy i testowy...")
 
     X_train, X_test, y_train, y_test = train_test_split(
         X,
@@ -66,7 +64,7 @@ def train_ocsvm() -> None:
 
     print("Trenowanie modelu na próbkach normalnych...")
     model.fit(X_train_normal)
-    print("Trening modelu zakończony.")
+    print("Zakończono trenowanie modelu.")
 
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -79,7 +77,7 @@ def train_ocsvm() -> None:
     print(f"Model zapisany jako: {model_path}")
     print(f"Zbiór testowy zapisany jako: {test_data_path}")
 
-    print("\nZakończono proces.")
+    print("\nZakończono trenowanie One-Class SVM.")
 
 
 if __name__ == "__main__":

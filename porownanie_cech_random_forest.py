@@ -1,90 +1,12 @@
 from time import perf_counter
 
 import pandas as pd
-
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import (
-    accuracy_score,
-    average_precision_score,
-    balanced_accuracy_score,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-)
 from sklearn.model_selection import train_test_split
 
 import config
-
-from data_processor import get_processed_data
-
-
-def calculate_metrics(
-    y_true,
-    y_pred,
-    y_score,
-) -> dict:
-    tn, fp, fn, tp = confusion_matrix(
-        y_true,
-        y_pred,
-        labels=[0, 1],
-    ).ravel()
-
-    specificity = (
-        tn / (tn + fp)
-        if (tn + fp) > 0
-        else 0.0
-    )
-
-    false_positive_rate = (
-        fp / (fp + tn)
-        if (fp + tn) > 0
-        else 0.0
-    )
-
-    return {
-        "accuracy": accuracy_score(
-            y_true,
-            y_pred,
-        ),
-        "balanced_accuracy": balanced_accuracy_score(
-            y_true,
-            y_pred,
-        ),
-        "precision_anomaly": precision_score(
-            y_true,
-            y_pred,
-            pos_label=1,
-            zero_division=0,
-        ),
-        "recall_anomaly": recall_score(
-            y_true,
-            y_pred,
-            pos_label=1,
-            zero_division=0,
-        ),
-        "f1_anomaly": f1_score(
-            y_true,
-            y_pred,
-            pos_label=1,
-            zero_division=0,
-        ),
-        "specificity": specificity,
-        "false_positive_rate": false_positive_rate,
-        "roc_auc": roc_auc_score(
-            y_true,
-            y_score,
-        ),
-        "pr_auc": average_precision_score(
-            y_true,
-            y_score,
-        ),
-        "true_negative": int(tn),
-        "false_positive": int(fp),
-        "false_negative": int(fn),
-        "true_positive": int(tp),
-    }
+from metryki import calculate_binary_metrics
+from przetwarzanie_danych import get_processed_data
 
 
 def run_experiment(
@@ -147,7 +69,7 @@ def run_experiment(
         perf_counter() - prediction_start
     )
 
-    metrics = calculate_metrics(
+    metrics = calculate_binary_metrics(
         y_test,
         y_pred,
         y_score,
@@ -237,8 +159,6 @@ def run_experiment(
 
 
 def compare_feature_sets() -> None:
-    print("Wczytywanie danych...")
-
     df = get_processed_data()
 
     y = df["classification"]
