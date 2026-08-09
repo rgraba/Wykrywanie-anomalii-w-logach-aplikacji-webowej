@@ -48,8 +48,7 @@ def evaluate_one_class_model(
         "classification",
     ]
 
-    # Modele jednoklasowe uczymy wyłącznie
-    # na normalnych żądaniach.
+
     X_train_normal = X_train.loc[
         y_train == 0
     ]
@@ -97,21 +96,14 @@ def evaluate_one_class_model(
         X_test_scaled
     )
 
-    # sklearn:
-    #  1 = obserwacja normalna
-    # -1 = anomalia
-    #
-    # Projekt:
-    # 0 = normalna
-    # 1 = anomalia
+
     y_pred = np.where(
         raw_predictions == -1,
         1,
         0,
     )
 
-    # Większa wartość oznacza większe
-    # prawdopodobieństwo anomalii.
+
     y_score = -model.decision_function(
         X_test_scaled
     )

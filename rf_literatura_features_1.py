@@ -243,8 +243,6 @@ def compare_feature_sets() -> None:
 
     y = df["classification"]
 
-    # Podział 60/40 zgodny z publikacją
-    # Althubiti et al.
     train_indices, test_indices = (
         train_test_split(
             df.index,
