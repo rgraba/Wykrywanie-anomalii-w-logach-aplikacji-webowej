@@ -34,6 +34,8 @@ MODELS_TO_EVALUATE = {
     }
 }
 
+SPLIT_TYPE = "random"
+SPLIT_LABEL = "Podział losowy 80/20"
 
 def load_model_and_test_data(model_file: str, test_file: str):
     model_path = config.MODELS_DIR / model_file
@@ -46,7 +48,6 @@ def load_model_and_test_data(model_file: str, test_file: str):
 
 
 def predict_labels(model, X_test, model_type: str):
-    # 0: normalny ruch, 1: anomalia / atak.
 
     if model_type == "classifier":
         return model.predict(X_test)
@@ -104,6 +105,9 @@ def calculate_metrics(
         "False Positive Rate": raw_metrics["false_positive_rate"],
         "ROC AUC": raw_metrics["roc_auc"],
         "PR AUC": raw_metrics["pr_auc"],
+        "Split": SPLIT_TYPE,
+        "Protokół": SPLIT_LABEL,
+        "Seed": config.RANDOM_STATE,
     }
 
 
@@ -132,13 +136,16 @@ def plot_confusion_matrices(results: dict) -> None:
             yticklabels=["Normalny", "Anomalia"]
         )
 
-        ax.set_title(f"Macierz pomyłek: {model_name}")
+        ax.set_title(
+            f"Macierz pomyłek: {model_name}\n"
+            f"{SPLIT_LABEL}"
+        )
         ax.set_xlabel("Przewidywana klasa")
         ax.set_ylabel("Rzeczywista klasa")
 
     plt.tight_layout()
 
-    output_path = config.REPORTS_DIR / "confusion_matrices.png"
+    output_path = config.REPORTS_DIR / "confusion_matrices_random_80_20.png"
     plt.savefig(output_path, dpi=300)
     plt.show()
 
@@ -175,14 +182,16 @@ def plot_roc_curves(results: dict) -> None:
 
     plt.xlabel("Odsetek fałszywie dodatnich (FPR)")
     plt.ylabel("Odsetek prawdziwie dodatnich (TPR)")
-    plt.title("Krzywe ROC dla modeli")
+    plt.title(
+        "Krzywe ROC dla modeli\n"
+        f"{SPLIT_LABEL}"
+    )
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
 
-    output_path = config.REPORTS_DIR / "roc_curves.png"
-    plt.savefig(output_path, dpi=300)
-    bbox_inches = "tight"
+    output_path = config.REPORTS_DIR / "roc_curves_random_80_20.png"
+    plt.savefig(output_path, dpi=300, bbox_inches = "tight")
     plt.show()
     plt.close()
 
@@ -252,7 +261,7 @@ def evaluate_models() -> None:
     print("\nPODSUMOWANIE METRYK")
     print(summary_df.round(4).to_string(index=False))
 
-    metrics_path = config.REPORTS_DIR / "metrics_summary.csv"
+    metrics_path = config.REPORTS_DIR / "metrics_summary_random_80_20.csv"
     summary_df.to_csv(metrics_path, index=False)
 
     print(f"\nTabela metryk zapisana jako: {metrics_path}")

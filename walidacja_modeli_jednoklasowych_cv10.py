@@ -4,9 +4,11 @@ from time import perf_counter
 import pandas as pd
 
 from sklearn.ensemble import IsolationForest
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
+
+from podzial_danych import add_request_groups
 
 import config
 from metryki import (
@@ -22,26 +24,38 @@ from selekcja_cech import (
 
 TUNED_ISOLATION_FOREST = {
     "BASIC": {
-        "contamination": 0.4,
-        "n_estimators": 200,
+        "contamination": 0.3,
+        "n_estimators": 100,
     },
     "ALTHUBITI_9": {
         "contamination": 0.4,
         "n_estimators": 300,
     },
-    "IG_RF_SELECTED": {
-        "contamination": 0.4,
+    "INFORMATION_GAIN": {
+        "contamination": 0.2,
+        "n_estimators": 300,
+    },
+    "RF_IMPORTANCE": {
+        "contamination": 0.2,
         "n_estimators": 300,
     },
 }
 
 
 TUNED_ONE_CLASS_SVM = {
-    "ALTHUBITI_9": {
+    "BASIC": {
         "gamma": 1.0,
         "nu": 0.4,
     },
-    "IG_RF_SELECTED": {
+    "ALTHUBITI_9": {
+        "gamma": "scale",
+        "nu": 0.4,
+    },
+    "INFORMATION_GAIN": {
+        "gamma": 1.0,
+        "nu": 0.4,
+    },
+    "RF_IMPORTANCE": {
         "gamma": 1.0,
         "nu": 0.4,
     },
@@ -213,9 +227,13 @@ def create_summary(
             as_index=False,
         )
         .agg(
-            number_of_features=(
+            number_of_features_mean=(
                 "number_of_features",
-                "first",
+                "mean",
+            ),
+            number_of_features_std=(
+                "number_of_features",
+                "std",
             ),
             parameters=(
                 "parameters",
@@ -310,9 +328,12 @@ def create_summary(
 def validate_configs_cv10() -> None:
     df = get_processed_data()
 
-    y = df["classification"]
+    grouped_df = add_request_groups(df)
 
-    splitter = StratifiedKFold(
+    y = grouped_df["classification"]
+    groups = grouped_df["request_group"]
+
+    splitter = StratifiedGroupKFold(
         n_splits=10,
         shuffle=True,
         random_state=config.RANDOM_STATE,
@@ -322,15 +343,43 @@ def validate_configs_cv10() -> None:
     selection_rows = []
 
     for fold_number, (
-        train_positions,
-        test_positions,
+            train_positions,
+            test_positions,
     ) in enumerate(
-        splitter.split(df, y),
+        splitter.split(
+            df,
+            y,
+            groups=groups,
+        ),
         start=1,
     ):
         print("\n" + "#" * 75)
         print(f"FOLD {fold_number}/10")
         print("#" * 75)
+
+        train_groups = set(
+            groups.iloc[train_positions]
+        )
+
+        test_groups = set(
+            groups.iloc[test_positions]
+        )
+
+        group_overlap = len(
+            train_groups.intersection(
+                test_groups
+            )
+        )
+
+        if group_overlap != 0:
+            raise RuntimeError(
+                f"Wykryto {group_overlap} wspólnych grup "
+                f"w foldzie {fold_number}."
+            )
+
+        print(
+            f"Wspólne grupy: {group_overlap}"
+        )
 
         train_indices = df.index[
             train_positions
@@ -369,24 +418,23 @@ def validate_configs_cv10() -> None:
         print(f"IG: {ig_features}")
         print(f"RF: {rf_features}")
 
-        if ig_features != rf_features:
-            raise RuntimeError(
-                "IG i RF wybrały różne cechy. "
-                "Sprawdź wyniki selekcji."
-            )
-
         selection_rows.append(
             {
                 "fold": fold_number,
                 "information_gain_features": (
                     ", ".join(ig_features)
                 ),
+                "information_gain_feature_count": (
+                    len(ig_features)
+                ),
                 "rf_importance_features": (
                     ", ".join(rf_features)
                 ),
-                "number_of_selected_features": (
-                    len(ig_features)
+                "rf_importance_feature_count": (
+                    len(rf_features)
                 ),
+                "split": "group",
+                "group_overlap": group_overlap,
             }
         )
 
@@ -397,7 +445,12 @@ def validate_configs_cv10() -> None:
             "ALTHUBITI_9": (
                 config.ML_FEATURES_ALTHUBITI_9
             ),
-            "IG_RF_SELECTED": ig_features,
+            "INFORMATION_GAIN": (
+                ig_features
+            ),
+            "RF_IMPORTANCE": (
+                rf_features
+            ),
         }
 
         for feature_set_name, features in (
@@ -507,6 +560,9 @@ def validate_configs_cv10() -> None:
                     fold_number=fold_number,
                 )
 
+                metrics["split"] = "group"
+                metrics["group_overlap"] = group_overlap
+
                 all_metrics.append(metrics)
 
                 print(
@@ -539,17 +595,17 @@ def validate_configs_cv10() -> None:
 
     folds_path = (
         config.REPORTS_DIR
-        / "one_class_cv10_configs_folds.csv"
+        / "one_class_group_retuned_cv10_configs_folds.csv"
     )
 
     summary_path = (
         config.REPORTS_DIR
-        / "one_class_cv10_configs_summary.csv"
+        / "one_class_group_retuned_cv10_configs_summary.csv"
     )
 
     selection_path = (
         config.REPORTS_DIR
-        / "one_class_cv10_selection.csv"
+        / "one_class_group_retuned_cv10_selection.csv"
     )
 
     metrics_df.to_csv(
@@ -571,7 +627,8 @@ def validate_configs_cv10() -> None:
         "model",
         "feature_set",
         "configuration",
-        "number_of_features",
+        "number_of_features_mean",
+        "number_of_features_std",
         "balanced_accuracy_mean",
         "balanced_accuracy_std",
         "f1_anomaly_mean",

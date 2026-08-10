@@ -3,11 +3,12 @@ from time import perf_counter
 
 import numpy as np
 import pandas as pd
+from podzial_danych import add_request_groups
 
 from sklearn.ensemble import IsolationForest
 from sklearn.model_selection import (
     ParameterGrid,
-    train_test_split,
+    StratifiedGroupKFold,
 )
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
@@ -364,30 +365,126 @@ def evaluate_final_model(
 def optimize_models() -> None:
     df = get_processed_data()
 
-    y = df["classification"]
+    grouped_df = add_request_groups(df)
 
-    outer_train_indices, test_indices = (
-        train_test_split(
-            df.index,
-            test_size=0.4,
-            random_state=config.RANDOM_STATE,
-            stratify=y,
+    y = grouped_df["classification"]
+    groups = grouped_df["request_group"]
+
+    outer_splitter = StratifiedGroupKFold(
+        n_splits=5,
+        shuffle=True,
+        random_state=config.RANDOM_STATE,
+    )
+
+    outer_folds = list(
+        outer_splitter.split(
+            df,
+            y,
+            groups=groups,
         )
     )
 
-    outer_train_y = df.loc[
-        outer_train_indices,
-        "classification",
+    test_positions = np.concatenate(
+        [
+            outer_folds[0][1],
+            outer_folds[1][1],
+        ]
+    )
+
+    outer_train_positions = np.concatenate(
+        [
+            outer_folds[2][1],
+            outer_folds[3][1],
+            outer_folds[4][1],
+        ]
+    )
+
+    outer_train_indices = df.index[
+        outer_train_positions
     ]
 
-    inner_train_indices, validation_indices = (
-        train_test_split(
-            outer_train_indices,
-            test_size=0.2,
-            random_state=config.RANDOM_STATE,
-            stratify=outer_train_y,
+    test_indices = df.index[
+        test_positions
+    ]
+
+    outer_train_df = df.loc[
+        outer_train_indices
+    ]
+
+    outer_train_y = y.loc[
+        outer_train_indices
+    ]
+
+    outer_train_groups = groups.loc[
+        outer_train_indices
+    ]
+
+    inner_splitter = StratifiedGroupKFold(
+        n_splits=5,
+        shuffle=True,
+        random_state=config.RANDOM_STATE,
+    )
+
+    (
+        inner_train_positions,
+        validation_positions,
+    ) = next(
+        inner_splitter.split(
+            outer_train_df,
+            outer_train_y,
+            groups=outer_train_groups,
         )
     )
+
+    inner_train_indices = outer_train_df.index[
+        inner_train_positions
+    ]
+
+    validation_indices = outer_train_df.index[
+        validation_positions
+    ]
+
+    inner_train_group_values = set(
+        groups.loc[inner_train_indices]
+    )
+
+    validation_group_values = set(
+        groups.loc[validation_indices]
+    )
+
+    test_group_values = set(
+        groups.loc[test_indices]
+    )
+
+    train_validation_overlap = len(
+        inner_train_group_values.intersection(
+            validation_group_values
+        )
+    )
+
+    train_test_overlap = len(
+        inner_train_group_values.intersection(
+            test_group_values
+        )
+    )
+
+    validation_test_overlap = len(
+        validation_group_values.intersection(
+            test_group_values
+        )
+    )
+
+    if any(
+            [
+                train_validation_overlap,
+                train_test_overlap,
+                validation_test_overlap,
+            ]
+    ):
+        raise RuntimeError(
+            "Wykryto nakładanie grup pomiędzy "
+            "treningiem, walidacją i testem."
+        )
 
     X_selection_train = df.loc[
         inner_train_indices,
@@ -417,23 +514,19 @@ def optimize_models() -> None:
     print(f"Cechy RF: {rf_features}")
 
     feature_sets = {
-        "BASIC": config.ML_FEATURES_BASIC,
+        "BASIC": (
+            config.ML_FEATURES_BASIC
+        ),
         "ALTHUBITI_9": (
             config.ML_FEATURES_ALTHUBITI_9
         ),
-    }
-
-    if ig_features == rf_features:
-        feature_sets["IG_RF_SELECTED"] = (
+        "INFORMATION_GAIN": (
             ig_features
-        )
-    else:
-        feature_sets["INFORMATION_GAIN"] = (
-            ig_features
-        )
-        feature_sets["RF_IMPORTANCE"] = (
+        ),
+        "RF_IMPORTANCE": (
             rf_features
-        )
+        ),
+    }
 
     print("\n" + "=" * 75)
     print("PODZIAŁ DANYCH")
@@ -452,6 +545,20 @@ def optimize_models() -> None:
     )
     print(
         f"Test: {len(test_indices)}"
+    )
+    print(
+        "Overlap trening–walidacja: "
+        f"{train_validation_overlap}"
+    )
+
+    print(
+        "Overlap trening–test: "
+        f"{train_test_overlap}"
+    )
+
+    print(
+        "Overlap walidacja–test: "
+        f"{validation_test_overlap}"
     )
 
     search_rows = []
@@ -485,6 +592,31 @@ def optimize_models() -> None:
                 ),
             )
 
+            for search_row in model_search_rows:
+                search_row.update(
+                    {
+                        "split": "group",
+                        "inner_train_samples": len(
+                            inner_train_indices
+                        ),
+                        "validation_samples": len(
+                            validation_indices
+                        ),
+                        "test_samples": len(
+                            test_indices
+                        ),
+                        "train_validation_group_overlap": (
+                            train_validation_overlap
+                        ),
+                        "train_test_group_overlap": (
+                            train_test_overlap
+                        ),
+                        "validation_test_group_overlap": (
+                            validation_test_overlap
+                        ),
+                    }
+                )
+
             search_rows.extend(
                 model_search_rows
             )
@@ -514,6 +646,27 @@ def optimize_models() -> None:
                 validation_metrics=(
                     best_validation_metrics
                 ),
+            )
+
+            final_metrics.update(
+                {
+                    "split": "group",
+                    "outer_train_samples": len(
+                        outer_train_indices
+                    ),
+                    "validation_samples": len(
+                        validation_indices
+                    ),
+                    "train_validation_group_overlap": (
+                        train_validation_overlap
+                    ),
+                    "train_test_group_overlap": (
+                        train_test_overlap
+                    ),
+                    "validation_test_group_overlap": (
+                        validation_test_overlap
+                    ),
+                }
             )
 
             final_rows.append(
@@ -547,12 +700,12 @@ def optimize_models() -> None:
 
     search_path = (
         config.REPORTS_DIR
-        / "one_class_parameter_search_validation.csv"
+        / "one_class_group_parameter_search_validation.csv"
     )
 
     final_path = (
         config.REPORTS_DIR
-        / "one_class_tuned_test_60_40.csv"
+        / "one_class_group_tuned_test_60_40.csv"
     )
 
     search_df.to_csv(

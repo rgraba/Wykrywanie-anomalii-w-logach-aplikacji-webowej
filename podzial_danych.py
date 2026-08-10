@@ -199,3 +199,44 @@ def create_random_split(
     )
 
     return pd.Index(train_indices), pd.Index(test_indices)
+
+def get_split_indices(
+    df: pd.DataFrame,
+    split_type: str,
+) -> tuple[pd.Index, pd.Index]:
+    if split_type == "group":
+        return load_group_split(df)
+
+    if split_type == "random":
+        return create_random_split(df)
+
+    raise ValueError(
+        "Nieznany rodzaj podziału: "
+        f"{split_type}. Dostępne: random, group."
+    )
+
+
+def calculate_group_overlap(
+    df: pd.DataFrame,
+    train_indices: pd.Index,
+    test_indices: pd.Index,
+) -> int:
+    grouped_df = add_request_groups(df)
+
+    train_groups = set(
+        grouped_df.loc[
+            train_indices,
+            "request_group",
+        ]
+    )
+
+    test_groups = set(
+        grouped_df.loc[
+            test_indices,
+            "request_group",
+        ]
+    )
+
+    return len(
+        train_groups.intersection(test_groups)
+    )

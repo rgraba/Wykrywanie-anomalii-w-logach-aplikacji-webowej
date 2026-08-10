@@ -1,7 +1,10 @@
 import pandas as pd
 from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import train_test_split
+from podzial_danych import (
+    calculate_group_overlap,
+    get_split_indices,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
@@ -19,7 +22,8 @@ def train_ocsvm_tfidf_svd(
     max_features=10000,
     n_components=256,
     nu=0.3,
-    gamma="scale"
+    gamma="scale",
+    split_type: str = "group",
 ) -> dict:
     df = get_processed_data()
 
@@ -29,15 +33,25 @@ def train_ocsvm_tfidf_svd(
     X = df["request_text"]
     y = df["classification"]
 
-    print("Podział danych na zbiór treningowy i testowy...")
+    print(f"Podział danych: {split_type}...")
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=config.TEST_SIZE,
-        random_state=config.RANDOM_STATE,
-        stratify=y
+    train_indices, test_indices = get_split_indices(
+        df,
+        split_type,
     )
+
+    X_train = X.loc[train_indices]
+    X_test = X.loc[test_indices]
+    y_train = y.loc[train_indices]
+    y_test = y.loc[test_indices]
+
+    group_overlap = calculate_group_overlap(
+        df,
+        train_indices,
+        test_indices,
+    )
+
+    print(f"Liczba wspólnych grup: {group_overlap}")
 
     X_train_normal = X_train[y_train == 0]
 
@@ -90,6 +104,10 @@ def train_ocsvm_tfidf_svd(
     results["n_components"] = n_components
     results["nu"] = nu
     results["gamma"] = gamma
+    results["split"] = split_type
+    results["train_size"] = len(train_indices)
+    results["test_size"] = len(test_indices)
+    results["group_overlap"] = group_overlap
 
     config.REPORTS_DIR.mkdir(
         parents=True,
@@ -98,7 +116,7 @@ def train_ocsvm_tfidf_svd(
 
     output_path = (
             config.REPORTS_DIR
-            / "one_class_svm_tfidf_2gram_svd.csv"
+            / f"one_class_svm_tfidf_2gram_svd_{split_type}.csv"
     )
 
     pd.DataFrame([results]).to_csv(
@@ -121,5 +139,6 @@ if __name__ == "__main__":
         max_features=10000,
         n_components=512,
         nu=0.3,
-        gamma=0.01
+        gamma=0.01,
+        split_type="group",
     )

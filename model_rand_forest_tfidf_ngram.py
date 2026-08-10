@@ -1,7 +1,10 @@
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import train_test_split
+from podzial_danych import (
+    calculate_group_overlap,
+    get_split_indices,
+)
 from sklearn.pipeline import Pipeline
 
 import config
@@ -11,7 +14,8 @@ from przetwarzanie_danych import get_processed_data
 
 def train_rf_tfidf_ngram(
     ngram_range=(3, 3),
-    max_features=5000
+    max_features=5000,
+    split_type: str = "group",
 ) -> dict:
 
     df = get_processed_data()
@@ -22,15 +26,27 @@ def train_rf_tfidf_ngram(
     X = df["request_text"]
     y = df["classification"]
 
-    print("Podział danych na zbiór treningowy i testowy...")
+    print(f"Podział danych: {split_type}...")
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=config.TEST_SIZE,
-        random_state=config.RANDOM_STATE,
-        stratify=y
+    train_indices, test_indices = get_split_indices(
+        df,
+        split_type,
     )
+
+    X_train = X.loc[train_indices]
+    X_test = X.loc[test_indices]
+    y_train = y.loc[train_indices]
+    y_test = y.loc[test_indices]
+
+    group_overlap = calculate_group_overlap(
+        df,
+        train_indices,
+        test_indices,
+    )
+
+    print(f"Liczba próbek treningowych: {len(train_indices)}")
+    print(f"Liczba próbek testowych: {len(test_indices)}")
+    print(f"Liczba wspólnych grup: {group_overlap}")
 
     print("Budowanie pipeline: TF-IDF char n-gram + Random Forest...")
 
@@ -68,6 +84,10 @@ def train_rf_tfidf_ngram(
     results["representation"] = "TF-IDF char n-gram"
     results["ngram_range"] = str(ngram_range)
     results["max_features"] = max_features
+    results["split"] = split_type
+    results["train_size"] = len(train_indices)
+    results["test_size"] = len(test_indices)
+    results["group_overlap"] = group_overlap
 
     config.REPORTS_DIR.mkdir(
         parents=True,
@@ -76,7 +96,7 @@ def train_rf_tfidf_ngram(
 
     output_path = (
             config.REPORTS_DIR
-            / "random_forest_tfidf_ngram.csv"
+            / f"random_forest_tfidf_ngram_{split_type}.csv"
     )
 
     pd.DataFrame([results]).to_csv(
@@ -96,5 +116,6 @@ def train_rf_tfidf_ngram(
 if __name__ == "__main__":
     train_rf_tfidf_ngram(
         ngram_range=(3, 3),
-        max_features=20000
+        max_features=20000,
+        split_type="group",
     )

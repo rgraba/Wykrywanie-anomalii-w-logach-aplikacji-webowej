@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold
+from podzial_danych import add_request_groups
 
 import config
 from przetwarzanie_danych import get_processed_data
@@ -84,10 +85,11 @@ def create_selection_stability(
 
 def validate_with_cv10() -> None:
     df = get_processed_data()
+    grouped_df = add_request_groups(df)
+    y = grouped_df["classification"]
+    groups = grouped_df["request_group"]
 
-    y = df["classification"]
-
-    splitter = StratifiedKFold(
+    splitter = StratifiedGroupKFold(
         n_splits=10,
         shuffle=True,
         random_state=config.RANDOM_STATE,
@@ -98,15 +100,43 @@ def validate_with_cv10() -> None:
     l1_parameters = []
 
     for fold_number, (
-        train_positions,
-        validation_positions,
+            train_positions,
+            validation_positions,
     ) in enumerate(
-        splitter.split(df, y),
+        splitter.split(
+            df,
+            y,
+            groups=groups,
+        ),
         start=1,
     ):
         print("\n" + "#" * 75)
         print(f"FOLD {fold_number}/10")
         print("#" * 75)
+
+        train_groups = set(
+            groups.iloc[train_positions]
+        )
+
+        validation_groups = set(
+            groups.iloc[validation_positions]
+        )
+
+        group_overlap = len(
+            train_groups.intersection(
+                validation_groups
+            )
+        )
+
+        if group_overlap != 0:
+            raise RuntimeError(
+                f"Wykryto {group_overlap} wspólnych grup "
+                f"w foldzie {fold_number}."
+            )
+
+        print(
+            f"Wspólne grupy: {group_overlap}"
+        )
 
         train_indices = df.index[
             train_positions
@@ -219,6 +249,8 @@ def validate_with_cv10() -> None:
             )
 
             metrics["fold"] = fold_number
+            metrics["split"] = "group"
+            metrics["group_overlap"] = group_overlap
 
             if feature_set_name == "L1_LASSO":
                 metrics["l1_best_c"] = (
@@ -262,27 +294,27 @@ def validate_with_cv10() -> None:
 
     folds_path = (
         config.REPORTS_DIR
-        / "rf_feature_selection_cv10_folds.csv"
+        / "rf_feature_selection_group_cv10_folds.csv"
     )
 
     summary_path = (
         config.REPORTS_DIR
-        / "rf_feature_selection_cv10_summary.csv"
+        / "rf_feature_selection_group_cv10_summary.csv"
     )
 
     scores_path = (
         config.REPORTS_DIR
-        / "rf_feature_selection_cv10_scores.csv"
+        / "rf_feature_selection_group_cv10_scores.csv"
     )
 
     stability_path = (
         config.REPORTS_DIR
-        / "rf_feature_selection_cv10_stability.csv"
+        / "rf_feature_selection_group_cv10_stability.csv"
     )
 
     l1_path = (
         config.REPORTS_DIR
-        / "rf_feature_selection_cv10_l1_parameters.csv"
+        / "rf_feature_selection_group_cv10_l1_parameters.csv"
     )
 
     metrics_df.to_csv(

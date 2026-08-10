@@ -1,8 +1,9 @@
 from time import perf_counter
-
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedGroupKFold
+from podzial_danych import add_request_groups
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 
@@ -136,16 +137,67 @@ def evaluate_one_class_model(
 def compare_one_class_feature_sets() -> None:
     df = get_processed_data()
 
-    y = df["classification"]
+    grouped_df = add_request_groups(df)
 
-    train_indices, test_indices = (
-        train_test_split(
-            df.index,
-            test_size=0.4,
-            random_state=config.RANDOM_STATE,
-            stratify=y,
+    y = grouped_df["classification"]
+    groups = grouped_df["request_group"]
+
+    splitter = StratifiedGroupKFold(
+        n_splits=5,
+        shuffle=True,
+        random_state=config.RANDOM_STATE,
+    )
+
+    folds = list(
+        splitter.split(
+            df,
+            y,
+            groups=groups,
         )
     )
+
+    test_positions = np.concatenate(
+        [
+            folds[0][1],
+            folds[1][1],
+        ]
+    )
+
+    train_positions = np.concatenate(
+        [
+            folds[2][1],
+            folds[3][1],
+            folds[4][1],
+        ]
+    )
+
+    train_indices = df.index[
+        train_positions
+    ]
+
+    test_indices = df.index[
+        test_positions
+    ]
+
+    train_groups = set(
+        groups.loc[train_indices]
+    )
+
+    test_groups = set(
+        groups.loc[test_indices]
+    )
+
+    group_overlap = len(
+        train_groups.intersection(
+            test_groups
+        )
+    )
+
+    if group_overlap != 0:
+        raise RuntimeError(
+            f"Wykryto {group_overlap} wspólnych grup "
+            "pomiędzy treningiem i testem."
+        )
 
     X_selection_train = df.loc[
         train_indices,
@@ -177,23 +229,19 @@ def compare_one_class_feature_sets() -> None:
     print(f"Cechy RF: {rf_features}")
 
     feature_sets = {
-        "BASIC": config.ML_FEATURES_BASIC,
+        "BASIC": (
+            config.ML_FEATURES_BASIC
+        ),
         "ALTHUBITI_9": (
             config.ML_FEATURES_ALTHUBITI_9
         ),
-    }
-
-    if ig_features == rf_features:
-        feature_sets["IG_RF_SELECTED"] = (
+        "INFORMATION_GAIN": (
             ig_features
-        )
-    else:
-        feature_sets["INFORMATION_GAIN"] = (
-            ig_features
-        )
-        feature_sets["RF_IMPORTANCE"] = (
+        ),
+        "RF_IMPORTANCE": (
             rf_features
-        )
+        ),
+    }
 
     model_names = [
         "ISOLATION_FOREST",
@@ -213,7 +261,13 @@ def compare_one_class_feature_sets() -> None:
     print("\n" + "=" * 75)
     print("PROTOKÓŁ EKSPERYMENTALNY")
     print("=" * 75)
-    print("Podział: 60% trening / 40% test")
+    print(
+        "Podział grupowy: "
+        "60% trening / 40% test"
+    )
+    print(
+        f"Wspólne grupy: {group_overlap}"
+    )
     print(f"Seed: {config.RANDOM_STATE}")
     print(
         "Normalne próbki treningowe: "
@@ -245,6 +299,12 @@ def compare_one_class_feature_sets() -> None:
                 features=features,
                 train_indices=train_indices,
                 test_indices=test_indices,
+            )
+
+            metrics["split"] = "group"
+            metrics["group_overlap"] = group_overlap
+            metrics["train_samples"] = len(
+                train_indices
             )
 
             metrics_rows.append(metrics)
@@ -293,7 +353,7 @@ def compare_one_class_feature_sets() -> None:
 
     output_path = (
         config.REPORTS_DIR
-        / "one_class_literature_features_60_40.csv"
+        / "one_class_group_literature_features_60_40.csv"
     )
 
     metrics_df.to_csv(

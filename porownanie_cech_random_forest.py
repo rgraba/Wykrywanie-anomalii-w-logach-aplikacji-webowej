@@ -79,6 +79,8 @@ def run_experiment(
     metrics["number_of_features"] = len(features)
     metrics["train_size"] = len(train_indices)
     metrics["test_size"] = len(test_indices)
+    metrics["split"] = "random"
+    metrics["seed"] = config.RANDOM_STATE
     metrics["training_time_seconds"] = (
         training_time
     )
@@ -91,6 +93,8 @@ def run_experiment(
             "feature_set": feature_set_name,
             "feature": feature,
             "importance": importance,
+            "split": "random",
+            "seed": config.RANDOM_STATE,
         }
         for feature, importance in sorted(
             zip(
@@ -173,7 +177,7 @@ def compare_feature_sets() -> None:
     )
 
     print("\nPROTOKÓŁ EKSPERYMENTALNY")
-    print("Podział: 60% trening / 40% test")
+    print("Podział losowy: 60% trening / 40% test")
     print(f"Seed: {config.RANDOM_STATE}")
     print(
         f"Liczba próbek treningowych: "
@@ -234,12 +238,12 @@ def compare_feature_sets() -> None:
 
     metrics_path = (
         config.REPORTS_DIR
-        / "rf_literature_features_60_40.csv"
+        / "rf_literature_features_random_60_40.csv"
     )
 
     importances_path = (
         config.REPORTS_DIR
-        / "rf_literature_feature_importances.csv"
+        / "rf_literature_feature_importances_random.csv"
     )
 
     metrics_df.to_csv(

@@ -78,6 +78,10 @@ def evaluate_feature_set(
 
     metrics["feature_set"] = feature_set_name
     metrics["number_of_features"] = len(features)
+    metrics["split"] = "random"
+    metrics["seed"] = config.RANDOM_STATE
+    metrics["train_size"] = len(train_indices)
+    metrics["test_size"] = len(test_indices)
     metrics["selected_features"] = ", ".join(
         features
     )
@@ -241,6 +245,9 @@ def compare_feature_selection() -> None:
         + rf_scores
     )
 
+    scores_df["split"] = "random"
+    scores_df["seed"] = config.RANDOM_STATE
+
     config.REPORTS_DIR.mkdir(
         parents=True,
         exist_ok=True,
@@ -248,12 +255,12 @@ def compare_feature_selection() -> None:
 
     metrics_path = (
         config.REPORTS_DIR
-        / "rf_feature_selection_60_40.csv"
+        / "rf_feature_selection_random_60_40.csv"
     )
 
     scores_path = (
         config.REPORTS_DIR
-        / "rf_feature_selection_scores.csv"
+        / "rf_feature_selection_scores_random.csv"
     )
 
     metrics_df.to_csv(
