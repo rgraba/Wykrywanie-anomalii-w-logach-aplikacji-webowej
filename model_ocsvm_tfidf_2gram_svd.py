@@ -139,6 +139,6 @@ if __name__ == "__main__":
         max_features=10000,
         n_components=512,
         nu=0.3,
-        gamma=0.01,
+        gamma="scale",
         split_type="group",
     )

@@ -115,7 +115,7 @@ def train_rf_tfidf_ngram(
 
 if __name__ == "__main__":
     train_rf_tfidf_ngram(
-        ngram_range=(3, 3),
-        max_features=20000,
+        ngram_range=(2, 4),
+        max_features=5000,
         split_type="group",
     )
