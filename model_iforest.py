@@ -1,80 +1,85 @@
 import joblib
 from sklearn.ensemble import IsolationForest
-from sklearn.model_selection import train_test_split
 
 import config
+from protokol_eksperymentalny import (
+    get_development_and_final_test_indices,
+)
 from przetwarzanie_danych import get_processed_data
 
 
 def train_isolation_forest() -> None:
-    try:
-        df = get_processed_data()
-    except Exception as e:
-        print(f"Błąd podczas pobierania danych: {e}")
-        return
+    df = get_processed_data()
+    features = config.ML_FEATURES
 
     missing_features = [
-        feature for feature in config.ML_FEATURES
+        feature for feature in features
         if feature not in df.columns
     ]
 
     if missing_features:
-        print(f"Błąd: brakuje cech w danych: {missing_features}")
-        return
+        raise ValueError(
+            f"Brakuje cech w danych: {missing_features}"
+        )
 
-    if "classification" not in df.columns:
-        print("Błąd: brakuje kolumny 'classification' w danych.")
-        return
-
-    print("Wyodrębnianie cech i etykiet...")
-
-    X = df[config.ML_FEATURES]
-    y = df["classification"]
-
-    print("\nRozkład klas w całym zbiorze:")
-    print(y.value_counts())
-    print("\nRozkład klas procentowo:")
-    print(y.value_counts(normalize=True).round(4))
-
-    print("\nPodział danych na zbiór treningowy i testowy...")
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=config.TEST_SIZE,
-        random_state=config.RANDOM_STATE,
-        stratify=y
+    development_indices, _ = (
+        get_development_and_final_test_indices(df)
     )
 
-    X_train_normal = X_train[y_train == 0]
+    X_development = df.loc[
+        development_indices,
+        features,
+    ]
 
-    print(f"Rozmiar zbioru treningowego: {X_train.shape[0]} próbek.")
-    print(f"Rozmiar zbioru testowego: {X_test.shape[0]} próbek.")
-    print(f"Liczba normalnych próbek użytych do treningu: {X_train_normal.shape[0]}.")
+    y_development = df.loc[
+        development_indices,
+        "classification",
+    ]
 
-    print("\nInicjalizacja modelu Isolation Forest...")
+    X_train_normal = X_development.loc[
+        y_development == 0
+    ]
 
     model = IsolationForest(
         **config.ISOLATION_FOREST_PARAMS,
-        random_state=config.RANDOM_STATE
+        random_state=config.RANDOM_STATE,
+        n_jobs=-1,
     )
 
-    print("Trenowanie modelu na próbkach normalnych...")
+    print(
+        "Trenowanie Isolation Forest na normalnych "
+        "próbkach części development..."
+    )
+
     model.fit(X_train_normal)
-    print("Zakończono trenowanie modelu.")
+
+    artifact = {
+        "model": model,
+        "model_name": "Isolation Forest",
+        "features": list(features),
+        "parameters": {
+            **config.ISOLATION_FOREST_PARAMS,
+            "random_state": config.RANDOM_STATE,
+        },
+        "training_partition": "development_normal_only",
+        "development_samples": len(development_indices),
+        "normal_training_samples": len(X_train_normal),
+        "protocol_seed": config.PROTOCOL_RANDOM_STATE,
+    }
 
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    model_path = config.MODELS_DIR / "iforest_model.pkl"
-    test_data_path = config.MODELS_DIR / "test_data_if.pkl"
+    model_path = (
+        config.MODELS_DIR
+        / "iforest_model_development.pkl"
+    )
 
-    joblib.dump(model, model_path)
-    joblib.dump((X_test, y_test), test_data_path)
+    joblib.dump(artifact, model_path)
 
-    print(f"Model zapisany jako: {model_path}")
-    print(f"Zbiór testowy zapisany jako: {test_data_path}")
-
-    print("\nZakończono trenowanie Isolation Forest.")
+    print(f"Model zapisano w: {model_path}")
+    print(f"Próbki development: {len(development_indices)}")
+    print(f"Normalne próbki treningowe: {len(X_train_normal)}")
+    print("Zbiór final_test nie został użyty.")
 
 
 if __name__ == "__main__":

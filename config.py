@@ -11,7 +11,15 @@ REPORTS_DIR = BASE_DIR / "reports"
 ARTIFACTS_DIR = BASE_DIR / "artifacts"
 SPLITS_DIR = BASE_DIR / "splits"
 
-GROUP_SPLIT_FILE = SPLITS_DIR / "group_split_seed_42.csv"
+EXPERIMENTAL_PROTOCOL_FILE = (
+    SPLITS_DIR
+    / "experimental_protocol_seed_2026.csv"
+)
+
+EXPERIMENTAL_PROTOCOL_METADATA_FILE = (
+    SPLITS_DIR
+    / "experimental_protocol_seed_2026.json"
+)
 DATA_FILE = DATA_DIR / "csic_database.csv"
 
 # Kolumny zbioru danych
@@ -84,7 +92,9 @@ TRAVERSAL_PATTERN = re.compile(
 # Generalne parametry
 
 RANDOM_STATE = 42
-TEST_SIZE = 0.2
+PROTOCOL_RANDOM_STATE = 2026
+FINAL_TEST_N_SPLITS = 5
+DEVELOPMENT_CV_N_SPLITS = 10
 
 # Hiperparametry
 

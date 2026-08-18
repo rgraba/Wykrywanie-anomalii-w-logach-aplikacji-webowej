@@ -1,144 +1,118 @@
-import pandas as pd
+import joblib
 from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
-from podzial_danych import (
-    calculate_group_overlap,
-    get_split_indices,
-)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 
 import config
-from metryki import (
-    calculate_binary_metrics,
-    convert_one_class_predictions,
+from protokol_eksperymentalny import (
+    get_development_and_final_test_indices,
 )
 from przetwarzanie_danych import get_processed_data
 
 
 def train_ocsvm_tfidf_svd(
-    ngram_range=(2, 2),
-    max_features=10000,
-    n_components=256,
-    nu=0.3,
-    gamma="scale",
-    split_type: str = "group",
-) -> dict:
+    ngram_range: tuple[int, int] = (2, 2),
+    max_features: int = 10000,
+    n_components: int = 512,
+    nu: float = 0.3,
+    gamma: str | float = "scale",
+) -> None:
     df = get_processed_data()
 
     if "request_text" not in df.columns:
-        raise ValueError("Brakuje kolumny request_text. Sprawdź funkcję add_request_text().")
+        raise ValueError(
+            "Brakuje kolumny request_text."
+        )
 
-    X = df["request_text"]
-    y = df["classification"]
-
-    print(f"Podział danych: {split_type}...")
-
-    train_indices, test_indices = get_split_indices(
-        df,
-        split_type,
+    development_indices, _ = (
+        get_development_and_final_test_indices(df)
     )
 
-    X_train = X.loc[train_indices]
-    X_test = X.loc[test_indices]
-    y_train = y.loc[train_indices]
-    y_test = y.loc[test_indices]
+    X_development = df.loc[
+        development_indices,
+        "request_text",
+    ]
 
-    group_overlap = calculate_group_overlap(
-        df,
-        train_indices,
-        test_indices,
+    y_development = df.loc[
+        development_indices,
+        "classification",
+    ]
+
+    X_train_normal = X_development.loc[
+        y_development == 0
+    ]
+
+    model = Pipeline(
+        [
+            (
+                "tfidf",
+                TfidfVectorizer(
+                    analyzer="char",
+                    ngram_range=ngram_range,
+                    max_features=max_features,
+                    lowercase=True,
+                ),
+            ),
+            (
+                "svd",
+                TruncatedSVD(
+                    n_components=n_components,
+                    random_state=config.RANDOM_STATE,
+                ),
+            ),
+            ("scaler", StandardScaler()),
+            (
+                "ocsvm",
+                OneClassSVM(
+                    kernel="rbf",
+                    nu=nu,
+                    gamma=gamma,
+                ),
+            ),
+        ]
     )
 
-    print(f"Liczba wspólnych grup: {group_overlap}")
+    print(
+        "Trenowanie One-Class SVM z reprezentacją "
+        "TF-IDF i SVD na normalnych próbkach development..."
+    )
 
-    X_train_normal = X_train[y_train == 0]
-
-    print(f"Rozmiar zbioru treningowego: {X_train.shape[0]} próbek.")
-    print(f"Rozmiar zbioru testowego: {X_test.shape[0]} próbek.")
-    print(f"Liczba normalnych próbek użytych do treningu: {X_train_normal.shape[0]}.")
-
-    print("Budowanie pipeline: TF-IDF char 2-gram + SVD + One-Class SVM...")
-
-    model = Pipeline([
-        ("tfidf", TfidfVectorizer(
-            analyzer="char",
-            ngram_range=ngram_range,
-            max_features=max_features,
-            lowercase=True
-        )),
-        ("svd", TruncatedSVD(
-            n_components=n_components,
-            random_state=config.RANDOM_STATE
-        )),
-        ("scaler", StandardScaler()),
-        ("ocsvm", OneClassSVM(
-            kernel="rbf",
-            nu=nu,
-            gamma=gamma
-        ))
-    ])
-
-    print("Trenowanie modelu na próbkach normalnych...")
     model.fit(X_train_normal)
 
-    print("Klasyfikacja próbek testowych...")
-    raw_predictions = model.predict(X_test)
-    y_pred = convert_one_class_predictions(
-        raw_predictions
+    artifact = {
+        "model": model,
+        "model_name": "One-Class SVM",
+        "representation": "TF-IDF char 2-gram + SVD",
+        "parameters": {
+            "ngram_range": ngram_range,
+            "max_features": max_features,
+            "n_components": n_components,
+            "kernel": "rbf",
+            "nu": nu,
+            "gamma": gamma,
+        },
+        "training_partition": "development_normal_only",
+        "development_samples": len(development_indices),
+        "normal_training_samples": len(X_train_normal),
+        "protocol_seed": config.PROTOCOL_RANDOM_STATE,
+    }
+
+    config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+    model_path = (
+        config.MODELS_DIR
+        / "ocsvm_tfidf_svd_development.pkl"
     )
 
-    y_score = -model.decision_function(X_test)
+    joblib.dump(artifact, model_path)
 
-    results = calculate_binary_metrics(
-        y_test,
-        y_pred,
-        y_score,
-    )
-
-    results["model"] = "One-Class SVM"
-    results["representation"] = "TF-IDF char 2-gram + SVD"
-    results["ngram_range"] = str(ngram_range)
-    results["max_features"] = max_features
-    results["n_components"] = n_components
-    results["nu"] = nu
-    results["gamma"] = gamma
-    results["split"] = split_type
-    results["train_size"] = len(train_indices)
-    results["test_size"] = len(test_indices)
-    results["group_overlap"] = group_overlap
-
-    config.REPORTS_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    output_path = (
-            config.REPORTS_DIR
-            / f"one_class_svm_tfidf_2gram_svd_{split_type}.csv"
-    )
-
-    pd.DataFrame([results]).to_csv(
-        output_path,
-        index=False,
-    )
-
-    print("\nWyniki:")
-    for key, value in results.items():
-        print(f"{key}: {value}")
-
-    print(f"\nWyniki zapisano w: {output_path}")
-
-    return results
+    print(f"Model zapisano w: {model_path}")
+    print(f"Próbki development: {len(development_indices)}")
+    print(f"Normalne próbki treningowe: {len(X_train_normal)}")
+    print("Zbiór final_test nie został użyty.")
 
 
 if __name__ == "__main__":
-    train_ocsvm_tfidf_svd(
-        ngram_range=(2, 2),
-        max_features=10000,
-        n_components=512,
-        nu=0.3,
-        gamma="scale",
-        split_type="group",
-    )
+    train_ocsvm_tfidf_svd()

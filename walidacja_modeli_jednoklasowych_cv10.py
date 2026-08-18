@@ -4,11 +4,10 @@ from time import perf_counter
 import pandas as pd
 
 from sklearn.ensemble import IsolationForest
-from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
-
-from podzial_danych import add_request_groups
+from podzial_danych import ensure_no_group_overlap
+from protokol_eksperymentalny import get_development_folds
 
 import config
 from metryki import (
@@ -87,7 +86,7 @@ def prepare_fold_data(
     df: pd.DataFrame,
     features: list[str],
     train_indices,
-    test_indices,
+    validation_indices,
 ):
     X_train = df.loc[
         train_indices,
@@ -99,13 +98,13 @@ def prepare_fold_data(
         "classification",
     ]
 
-    X_test = df.loc[
-        test_indices,
+    X_validation = df.loc[
+        validation_indices,
         features,
     ]
 
-    y_test = df.loc[
-        test_indices,
+    y_validation = df.loc[
+        validation_indices,
         "classification",
     ]
 
@@ -120,14 +119,14 @@ def prepare_fold_data(
         X_train_normal
     )
 
-    X_test_scaled = scaler.transform(
-        X_test
+    X_validation_scaled = scaler.transform(
+        X_validation
     )
 
     return (
         X_train_normal_scaled,
-        X_test_scaled,
-        y_test,
+        X_validation_scaled,
+        y_validation,
         len(X_train_normal),
     )
 
@@ -139,8 +138,8 @@ def evaluate_configuration(
     features: list[str],
     parameters: dict,
     X_train_normal,
-    X_test,
-    y_test,
+    X_validation,
+    y_validation,
     normal_training_samples: int,
     fold_number: int,
 ) -> dict:
@@ -162,13 +161,13 @@ def evaluate_configuration(
     prediction_start = perf_counter()
 
     raw_predictions = model.predict(
-        X_test
+        X_validation
     )
 
     y_pred = convert_one_class_predictions(raw_predictions)
 
     y_score = -model.decision_function(
-        X_test
+        X_validation
     )
 
     prediction_time = (
@@ -176,7 +175,7 @@ def evaluate_configuration(
     )
 
     metrics = calculate_binary_metrics(
-        y_true=y_test,
+        y_true=y_validation,
         y_pred=y_pred,
         y_score=y_score,
     )
@@ -198,7 +197,7 @@ def evaluate_configuration(
             "normal_training_samples": (
                 normal_training_samples
             ),
-            "test_samples": len(y_test),
+            "validation_samples": len(y_validation),
             "training_time_seconds": (
                 training_time
             ),
@@ -327,70 +326,31 @@ def create_summary(
 
 def validate_configs_cv10() -> None:
     df = get_processed_data()
-
-    grouped_df = add_request_groups(df)
-
-    y = grouped_df["classification"]
-    groups = grouped_df["request_group"]
-
-    splitter = StratifiedGroupKFold(
-        n_splits=10,
-        shuffle=True,
-        random_state=config.RANDOM_STATE,
-    )
+    folds = get_development_folds(df)
 
     all_metrics = []
     selection_rows = []
 
-    for fold_number, (
-            train_positions,
-            test_positions,
-    ) in enumerate(
-        splitter.split(
-            df,
-            y,
-            groups=groups,
-        ),
-        start=1,
-    ):
+    for fold_number, train_indices, validation_indices in folds:
         print("\n" + "#" * 75)
-        print(f"FOLD {fold_number}/10")
+        print(
+            f"FOLD {fold_number}/"
+            f"{config.DEVELOPMENT_CV_N_SPLITS}"
+        )
         print("#" * 75)
 
-        train_groups = set(
-            groups.iloc[train_positions]
+        group_overlap = ensure_no_group_overlap(
+            df=df,
+            first_indices=train_indices,
+            second_indices=validation_indices,
+            first_name=f"fold_{fold_number}_train",
+            second_name=f"fold_{fold_number}_validation",
         )
 
-        test_groups = set(
-            groups.iloc[test_positions]
-        )
+        print(f"Trening: {len(train_indices)} rekordów")
+        print(f"Walidacja: {len(validation_indices)} rekordów")
+        print(f"Wspólne grupy: {group_overlap}")
 
-        group_overlap = len(
-            train_groups.intersection(
-                test_groups
-            )
-        )
-
-        if group_overlap != 0:
-            raise RuntimeError(
-                f"Wykryto {group_overlap} wspólnych grup "
-                f"w foldzie {fold_number}."
-            )
-
-        print(
-            f"Wspólne grupy: {group_overlap}"
-        )
-
-        train_indices = df.index[
-            train_positions
-        ]
-
-        test_indices = df.index[
-            test_positions
-        ]
-
-        # Selekcja cech wyłącznie
-        # na części treningowej foldu.
         X_selection_train = df.loc[
             train_indices,
             config.ML_FEATURES_ALTHUBITI_9,
@@ -433,8 +393,11 @@ def validate_configs_cv10() -> None:
                 "rf_importance_feature_count": (
                     len(rf_features)
                 ),
-                "split": "group",
+                "split": "development_group_cv10",
+                "partition": "development",
                 "group_overlap": group_overlap,
+                "protocol_seed": config.PROTOCOL_RANDOM_STATE,
+                "final_test_used": False,
             }
         )
 
@@ -458,14 +421,14 @@ def validate_configs_cv10() -> None:
         ):
             (
                 X_train_normal,
-                X_test,
-                y_test,
+                X_validation,
+                y_validation,
                 normal_training_samples,
             ) = prepare_fold_data(
                 df=df,
                 features=features,
                 train_indices=train_indices,
-                test_indices=test_indices,
+                validation_indices=validation_indices,
             )
 
             experiments = []
@@ -552,16 +515,19 @@ def validate_configs_cv10() -> None:
                     X_train_normal=(
                         X_train_normal
                     ),
-                    X_test=X_test,
-                    y_test=y_test,
+                    X_validation=X_validation,
+                    y_validation=y_validation,
                     normal_training_samples=(
                         normal_training_samples
                     ),
                     fold_number=fold_number,
                 )
 
-                metrics["split"] = "group"
+                metrics["split"] = "development_group_cv10"
+                metrics["partition"] = "development"
                 metrics["group_overlap"] = group_overlap
+                metrics["protocol_seed"] = config.PROTOCOL_RANDOM_STATE
+                metrics["final_test_used"] = False
 
                 all_metrics.append(metrics)
 

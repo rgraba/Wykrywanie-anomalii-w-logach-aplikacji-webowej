@@ -1,242 +1,322 @@
 import hashlib
+import json
 
 import pandas as pd
-from sklearn.model_selection import (
-    StratifiedGroupKFold,
-    train_test_split,
-)
-
 import config
 
 
-def calculate_request_hash(request_text: str) -> str:
-    normalized_text = str(request_text)
+REQUEST_COMPONENT_COLUMNS = (
+    "Method",
+    "URL",
+    "content",
+)
 
+
+def normalize_request_component(value) -> str:
+    if pd.isna(value):
+        return ""
+
+    return str(value)
+
+
+def create_canonical_request(
+    method,
+    url,
+    content,
+) -> str:
+    components = [
+        normalize_request_component(method),
+        normalize_request_component(url),
+        normalize_request_component(content),
+    ]
+
+    return json.dumps(
+        components,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def calculate_request_hash(
+    canonical_request: str,
+) -> str:
     return hashlib.sha256(
-        normalized_text.encode("utf-8", errors="replace")
+        canonical_request.encode(
+            "utf-8",
+            errors="replace",
+        )
     ).hexdigest()
 
 
-def add_request_groups(df: pd.DataFrame) -> pd.DataFrame:
-    if "request_text" not in df.columns:
-        raise ValueError("Brakuje kolumny request_text.")
+def create_canonical_requests(
+    df: pd.DataFrame,
+) -> pd.Series:
+    missing_columns = [
+        column
+        for column in REQUEST_COMPONENT_COLUMNS
+        if column not in df.columns
+    ]
 
+    if missing_columns:
+        raise ValueError(
+            "Brakuje kolumn potrzebnych do grupowania: "
+            f"{missing_columns}."
+        )
+
+    canonical_requests = [
+        create_canonical_request(
+            method,
+            url,
+            content,
+        )
+        for method, url, content in zip(
+            df["Method"],
+            df["URL"],
+            df["content"],
+        )
+    ]
+
+    return pd.Series(
+        canonical_requests,
+        index=df.index,
+        dtype="string",
+    )
+
+
+def add_request_groups(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
     result = df.copy()
 
-    result["request_group"] = result["request_text"].apply(
-        calculate_request_hash
+    canonical_requests = create_canonical_requests(
+        result
+    )
+
+    result["request_group"] = (
+        canonical_requests.apply(
+            calculate_request_hash
+        )
     )
 
     return result
 
 
-def create_and_save_group_split(df: pd.DataFrame) -> pd.DataFrame:
+def validate_request_groups(
+    df: pd.DataFrame,
+) -> dict:
+    if not df.index.is_unique:
+        raise ValueError(
+            "Indeksy rekordów nie są unikalne."
+        )
+
+    if "classification" not in df.columns:
+        raise ValueError(
+            "Brakuje kolumny classification."
+        )
+
     grouped_df = add_request_groups(df)
 
-    splitter = StratifiedGroupKFold(
-        n_splits=5,
-        shuffle=True,
-        random_state=config.RANDOM_STATE,
+    canonical_requests = create_canonical_requests(
+        grouped_df
     )
 
-    train_positions, test_positions = next(
-        splitter.split(
-            X=grouped_df,
-            y=grouped_df["classification"],
-            groups=grouped_df["request_group"],
-        )
-    )
-
-    assignments = pd.DataFrame(
+    group_audit = pd.DataFrame(
         {
-            "row_id": grouped_df.index.to_numpy(),
-            "request_group": grouped_df["request_group"].to_numpy(),
-            "classification": grouped_df["classification"].to_numpy(),
-            "split": "train",
-        }
+            "request_group": (
+                grouped_df["request_group"]
+            ),
+            "canonical_request": (
+                canonical_requests
+            ),
+            "classification": (
+                grouped_df["classification"]
+            ),
+        },
+        index=grouped_df.index,
     )
 
-    split_column = assignments.columns.get_loc("split")
-
-    assignments.iloc[test_positions, split_column] = "test"
-
-    train_groups = set(
-        assignments.loc[
-            assignments["split"] == "train",
-            "request_group",
+    requests_per_hash = (
+        group_audit
+        .groupby("request_group")[
+            "canonical_request"
         ]
+        .nunique(dropna=False)
     )
 
-    test_groups = set(
-        assignments.loc[
-            assignments["split"] == "test",
-            "request_group",
-        ]
-    )
+    collision_groups = requests_per_hash[
+        requests_per_hash > 1
+    ]
 
-    overlap = train_groups.intersection(test_groups)
-
-    if overlap:
+    if not collision_groups.empty:
         raise RuntimeError(
-            f"Wykryto {len(overlap)} wspólnych grup."
+            "Wykryto kolizję identyfikatora grupy "
+            f"dla {len(collision_groups)} grup."
         )
 
-    config.SPLITS_DIR.mkdir(parents=True, exist_ok=True)
-
-    assignments.to_csv(
-        config.GROUP_SPLIT_FILE,
-        index=False,
-    )
-
-    print("\nAUDYT DANYCH")
-    print(f"Liczba wszystkich rekordów: {len(grouped_df)}")
-    print(
-        "Liczba unikalnych żądań: "
-        f"{grouped_df['request_group'].nunique()}"
-    )
-    print(
-        "Liczba powtórzeń: "
-        f"{grouped_df['request_group'].duplicated().sum()}"
-    )
-
-    print("\nPODZIAŁ DANYCH")
-
-    for split_name in ["train", "test"]:
-        split_ids = assignments.loc[
-            assignments["split"] == split_name,
-            "row_id",
+    labels_per_group = (
+        group_audit
+        .groupby("request_group")[
+            "classification"
         ]
-
-        split_labels = grouped_df.loc[
-            split_ids,
-            "classification",
-        ]
-
-        print(f"\n{split_name.upper()}")
-        print(f"Liczba rekordów: {len(split_ids)}")
-        print("Rozkład klas:")
-        print(split_labels.value_counts())
-        print("Rozkład procentowy:")
-        print(split_labels.value_counts(normalize=True).round(4))
-
-    print(
-        "\nLiczba wspólnych grup między treningiem "
-        f"i testem: {len(overlap)}"
+        .nunique(dropna=False)
     )
 
-    print(
-        f"Podział zapisano w: {config.GROUP_SPLIT_FILE}"
-    )
-
-    return assignments
-
-
-def load_group_split(
-    df: pd.DataFrame,
-) -> tuple[pd.Index, pd.Index]:
-    if not config.GROUP_SPLIT_FILE.exists():
-        raise FileNotFoundError(
-            "Nie znaleziono zapisanego podziału. "
-            "Najpierw uruchom przygotowanie_podzialu.py."
-        )
-
-    assignments = pd.read_csv(config.GROUP_SPLIT_FILE)
-
-    if len(assignments) != len(df):
-        raise ValueError(
-            "Liczba rekordów w zapisanym podziale "
-            "nie odpowiada aktualnym danym."
-        )
-
-    if set(assignments["row_id"]) != set(df.index):
-        raise ValueError(
-            "Indeksy w zapisanym podziale "
-            "nie odpowiadają aktualnym danym."
-        )
-
-    current_groups = add_request_groups(df)[
-        ["request_group"]
+    mixed_label_groups = labels_per_group[
+        labels_per_group > 1
     ]
 
-    saved_groups = assignments.set_index("row_id").loc[
-        df.index,
-        "request_group",
-    ]
-
-    if not (
-        current_groups["request_group"].to_numpy()
-        == saved_groups.to_numpy()
-    ).all():
-        raise ValueError(
-            "Dane zmieniły się od czasu utworzenia podziału."
+    if not mixed_label_groups.empty:
+        raise RuntimeError(
+            "Wykryto identyczne żądania z różnymi "
+            f"etykietami w {len(mixed_label_groups)} grupach."
         )
 
-    train_indices = pd.Index(
-        assignments.loc[
-            assignments["split"] == "train",
-            "row_id",
+    group_sizes = (
+        grouped_df["request_group"]
+        .value_counts()
+    )
+
+    audit_results = {
+        "total_records": len(grouped_df),
+        "unique_groups": int(
+            grouped_df["request_group"].nunique()
+        ),
+        "duplicate_records": int(
+            len(grouped_df)
+            - grouped_df["request_group"].nunique()
+        ),
+        "records_in_duplicate_groups": int(
+            group_sizes[group_sizes > 1].sum()
+        ),
+        "duplicate_groups": int(
+            (group_sizes > 1).sum()
+        ),
+        "maximum_group_size": int(
+            group_sizes.max()
+        ),
+        "mixed_label_groups": 0,
+        "hash_collisions": 0,
+    }
+
+    return audit_results
+
+
+def validate_partition_indices(
+    df: pd.DataFrame,
+    indices,
+    partition_name: str,
+) -> pd.Index:
+    validated_indices = pd.Index(indices)
+
+    if validated_indices.has_duplicates:
+        raise ValueError(
+            f"Partycja {partition_name} zawiera "
+            "powtórzone indeksy rekordów."
+        )
+
+    missing_indices = validated_indices.difference(
+        df.index
+    )
+
+    if not missing_indices.empty:
+        raise ValueError(
+            f"Partycja {partition_name} zawiera "
+            f"{len(missing_indices)} indeksów, których "
+            "nie ma w zbiorze danych."
+        )
+
+    return validated_indices
+
+
+def find_group_overlap(
+    df: pd.DataFrame,
+    first_indices,
+    second_indices,
+    first_name: str = "train",
+    second_name: str = "evaluation",
+) -> set[str]:
+    first_indices = validate_partition_indices(
+        df,
+        first_indices,
+        first_name,
+    )
+
+    second_indices = validate_partition_indices(
+        df,
+        second_indices,
+        second_name,
+    )
+
+    row_overlap = first_indices.intersection(
+        second_indices
+    )
+
+    if not row_overlap.empty:
+        raise RuntimeError(
+            f"Partycje {first_name} i {second_name} "
+            f"zawierają {len(row_overlap)} wspólnych "
+            "indeksów rekordów."
+        )
+
+    grouped_df = add_request_groups(df)
+
+    first_groups = set(
+        grouped_df.loc[
+            first_indices,
+            "request_group",
         ]
     )
 
-    test_indices = pd.Index(
-        assignments.loc[
-            assignments["split"] == "test",
-            "row_id",
+    second_groups = set(
+        grouped_df.loc[
+            second_indices,
+            "request_group",
         ]
     )
 
-    return train_indices, test_indices
-
-
-def create_random_split(
-    df: pd.DataFrame,
-) -> tuple[pd.Index, pd.Index]:
-    train_indices, test_indices = train_test_split(
-        df.index,
-        test_size=config.TEST_SIZE,
-        random_state=config.RANDOM_STATE,
-        stratify=df["classification"],
-    )
-
-    return pd.Index(train_indices), pd.Index(test_indices)
-
-def get_split_indices(
-    df: pd.DataFrame,
-    split_type: str,
-) -> tuple[pd.Index, pd.Index]:
-    if split_type == "group":
-        return load_group_split(df)
-
-    if split_type == "random":
-        return create_random_split(df)
-
-    raise ValueError(
-        "Nieznany rodzaj podziału: "
-        f"{split_type}. Dostępne: random, group."
+    return first_groups.intersection(
+        second_groups
     )
 
 
 def calculate_group_overlap(
     df: pd.DataFrame,
-    train_indices: pd.Index,
-    test_indices: pd.Index,
+    train_indices,
+    test_indices,
 ) -> int:
-    grouped_df = add_request_groups(df)
-
-    train_groups = set(
-        grouped_df.loc[
-            train_indices,
-            "request_group",
-        ]
+    overlap = find_group_overlap(
+        df=df,
+        first_indices=train_indices,
+        second_indices=test_indices,
+        first_name="train",
+        second_name="test",
     )
 
-    test_groups = set(
-        grouped_df.loc[
-            test_indices,
-            "request_group",
-        ]
+    return len(overlap)
+
+
+def ensure_no_group_overlap(
+    df: pd.DataFrame,
+    first_indices,
+    second_indices,
+    first_name: str = "train",
+    second_name: str = "evaluation",
+) -> int:
+    overlap = find_group_overlap(
+        df=df,
+        first_indices=first_indices,
+        second_indices=second_indices,
+        first_name=first_name,
+        second_name=second_name,
     )
 
-    return len(
-        train_groups.intersection(test_groups)
-    )
+    if overlap:
+        example_groups = sorted(overlap)[:3]
+
+        raise RuntimeError(
+            f"Wykryto {len(overlap)} wspólnych grup "
+            f"pomiędzy {first_name} i {second_name}. "
+            f"Przykładowe grupy: {example_groups}"
+        )
+
+    return 0

@@ -1,17 +1,71 @@
 import numpy as np
 import pandas as pd
 
-from sklearn.model_selection import StratifiedGroupKFold
-from podzial_danych import add_request_groups
+from podzial_danych import (
+    add_request_groups,
+    ensure_no_group_overlap,
+)
+from protokol_eksperymentalny import get_development_folds
 
 import config
+from metryki import calculate_binary_metrics
 from przetwarzanie_danych import get_processed_data
-from porownanie_selekcji_cech_random_forest import evaluate_feature_set
+from time import perf_counter
+from sklearn.ensemble import RandomForestClassifier
 from selekcja_cech import (
     select_with_information_gain,
     select_with_l1,
     select_with_random_forest,
 )
+
+
+def evaluate_feature_set(
+    df: pd.DataFrame,
+    feature_set_name: str,
+    features: list[str],
+    train_indices: pd.Index,
+    validation_indices: pd.Index,
+) -> dict:
+    X_train = df.loc[train_indices, features]
+    y_train = df.loc[train_indices, "classification"]
+
+    X_validation = df.loc[validation_indices, features]
+    y_validation = df.loc[validation_indices, "classification"]
+
+    model = RandomForestClassifier(
+        **config.RANDOM_FOREST_PARAMS,
+        random_state=config.RANDOM_STATE,
+        n_jobs=-1,
+    )
+
+    training_start = perf_counter()
+    model.fit(X_train, y_train)
+    training_time = perf_counter() - training_start
+
+    prediction_start = perf_counter()
+    y_pred = model.predict(X_validation)
+    y_score = model.predict_proba(X_validation)[:, 1]
+    prediction_time = perf_counter() - prediction_start
+
+    metrics = calculate_binary_metrics(
+        y_true=y_validation,
+        y_pred=y_pred,
+        y_score=y_score,
+    )
+
+    metrics.update(
+        {
+            "feature_set": feature_set_name,
+            "number_of_features": len(features),
+            "selected_features": ", ".join(features),
+            "train_size": len(train_indices),
+            "validation_size": len(validation_indices),
+            "training_time_seconds": training_time,
+            "prediction_time_seconds": prediction_time,
+        }
+    )
+
+    return metrics
 
 
 def create_metrics_summary(
@@ -86,64 +140,40 @@ def create_selection_stability(
 def validate_with_cv10() -> None:
     df = get_processed_data()
     grouped_df = add_request_groups(df)
-    y = grouped_df["classification"]
-    groups = grouped_df["request_group"]
-
-    splitter = StratifiedGroupKFold(
-        n_splits=10,
-        shuffle=True,
-        random_state=config.RANDOM_STATE,
-    )
+    folds = get_development_folds(df)
 
     all_metrics = []
     all_scores = []
     l1_parameters = []
 
-    for fold_number, (
-            train_positions,
-            validation_positions,
-    ) in enumerate(
-        splitter.split(
-            df,
-            y,
-            groups=groups,
-        ),
-        start=1,
-    ):
+    for fold_number, train_indices, validation_indices in folds:
         print("\n" + "#" * 75)
-        print(f"FOLD {fold_number}/10")
+        print(
+            f"FOLD {fold_number}/"
+            f"{config.DEVELOPMENT_CV_N_SPLITS}"
+        )
         print("#" * 75)
 
-        train_groups = set(
-            groups.iloc[train_positions]
+        group_overlap = ensure_no_group_overlap(
+            df=df,
+            first_indices=train_indices,
+            second_indices=validation_indices,
+            first_name=f"fold_{fold_number}_train",
+            second_name=f"fold_{fold_number}_validation",
         )
 
-        validation_groups = set(
-            groups.iloc[validation_positions]
-        )
+        print(f"Trening: {len(train_indices)} rekordów")
+        print(f"Walidacja: {len(validation_indices)} rekordów")
+        print(f"Wspólne grupy: {group_overlap}")
 
-        group_overlap = len(
-            train_groups.intersection(
-                validation_groups
-            )
-        )
-
-        if group_overlap != 0:
-            raise RuntimeError(
-                f"Wykryto {group_overlap} wspólnych grup "
-                f"w foldzie {fold_number}."
-            )
-
-        print(
-            f"Wspólne grupy: {group_overlap}"
-        )
-
-        train_indices = df.index[
-            train_positions
+        X_train_all = df.loc[
+            train_indices,
+            config.ML_FEATURES_ALTHUBITI_9,
         ]
 
-        validation_indices = df.index[
-            validation_positions
+        y_train = df.loc[
+            train_indices,
+            "classification",
         ]
 
         X_train_all = df.loc[
@@ -154,6 +184,11 @@ def validate_with_cv10() -> None:
         y_train = df.loc[
             train_indices,
             "classification",
+        ]
+
+        train_groups = grouped_df.loc[
+            train_indices,
+            "request_group",
         ]
 
         print("Selekcja Information Gain...")
@@ -176,8 +211,9 @@ def validate_with_cv10() -> None:
             l1_scores,
             best_l1_c,
         ) = select_with_l1(
-            X_train_all,
-            y_train,
+            X_train=X_train_all,
+            y_train=y_train,
+            groups=train_groups,
         )
 
         print(
@@ -245,12 +281,15 @@ def validate_with_cv10() -> None:
                 feature_set_name=feature_set_name,
                 features=features,
                 train_indices=train_indices,
-                test_indices=validation_indices,
+                validation_indices=validation_indices,
             )
 
             metrics["fold"] = fold_number
-            metrics["split"] = "group"
+            metrics["split"] = "development_group_cv10"
+            metrics["partition"] = "development"
             metrics["group_overlap"] = group_overlap
+            metrics["protocol_seed"] = config.PROTOCOL_RANDOM_STATE
+            metrics["final_test_used"] = False
 
             if feature_set_name == "L1_LASSO":
                 metrics["l1_best_c"] = (

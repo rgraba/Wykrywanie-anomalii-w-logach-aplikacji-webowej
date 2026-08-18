@@ -1,15 +1,22 @@
+import config
+from protokol_eksperymentalny import create_and_save_experimental_protocol
 from przetwarzanie_danych import get_processed_data
-from podzial_danych import create_and_save_group_split
 
 
 def prepare_splits() -> None:
-    print("Przygotowywanie podziału grupowego...")
+    print("Przygotowywanie centralnego protokołu eksperymentalnego...")
 
     df = get_processed_data()
+    manifest = create_and_save_experimental_protocol(df)
 
-    create_and_save_group_split(df)
+    development_size = (manifest["partition"] == "development").sum()
+    final_test_size = (manifest["partition"] == "final_test").sum()
 
-    print("\nPodział danych przygotowany poprawnie.")
+    print("\nProtokół przygotowany poprawnie.")
+    print(f"Development: {development_size} rekordów")
+    print(f"Final test: {final_test_size} rekordów")
+    print(f"Manifest: {config.EXPERIMENTAL_PROTOCOL_FILE}")
+    print(f"Metadane: {config.EXPERIMENTAL_PROTOCOL_METADATA_FILE}")
 
 
 if __name__ == "__main__":
