@@ -2,11 +2,14 @@ import json
 from time import perf_counter
 
 import pandas as pd
-
+import numpy as np
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
-from podzial_danych import ensure_no_group_overlap
+from podzial_danych import (
+    add_request_groups,
+    ensure_no_group_overlap,
+)
 from protokol_eksperymentalny import get_development_folds
 
 import config
@@ -19,6 +22,7 @@ from selekcja_cech import (
     select_with_information_gain,
     select_with_random_forest,
 )
+from sklearn.model_selection import GroupShuffleSplit
 
 
 TUNED_ISOLATION_FOREST = {
@@ -59,6 +63,118 @@ TUNED_ONE_CLASS_SVM = {
         "nu": 0.4,
     },
 }
+
+ONE_CLASS_SCENARIO = "supervised_calibrated_one_class"
+STRICT_ONE_CLASS_SCENARIO = "strict_one_class"
+STRICT_CALIBRATION_SIZE = 0.2
+STRICT_TARGET_FPRS = (0.01, 0.05, 0.10)
+STRICT_PRIMARY_FPR = 0.05
+
+
+def create_strict_normal_split(
+    df: pd.DataFrame,
+    train_indices,
+    fold_number: int,
+) -> tuple[pd.Index, pd.Index]:
+    normal_training_data = df.loc[train_indices]
+    normal_training_data = normal_training_data.loc[
+        normal_training_data["classification"] == 0
+    ]
+
+    splitter = GroupShuffleSplit(
+        n_splits=1,
+        test_size=STRICT_CALIBRATION_SIZE,
+        random_state=(
+            config.PROTOCOL_RANDOM_STATE
+            + fold_number
+        ),
+    )
+
+    fit_positions, calibration_positions = next(
+        splitter.split(
+            normal_training_data,
+            groups=normal_training_data["request_group"],
+        )
+    )
+
+    fit_indices = pd.Index(
+        normal_training_data.index[fit_positions]
+    )
+
+    calibration_indices = pd.Index(
+        normal_training_data.index[
+            calibration_positions
+        ]
+    )
+
+    calibration_overlap = ensure_no_group_overlap(
+        df=df,
+        first_indices=fit_indices,
+        second_indices=calibration_indices,
+        first_name=f"fold_{fold_number}_strict_fit",
+        second_name=f"fold_{fold_number}_strict_calibration",
+    )
+
+    if calibration_overlap != 0:
+        raise RuntimeError(
+            "Wewnętrzny podział strict one-class "
+            "zawiera wspólne grupy."
+        )
+
+    if len(fit_indices) + len(calibration_indices) != len(
+        normal_training_data
+    ):
+        raise RuntimeError(
+            "Wewnętrzny podział strict one-class "
+            "nie obejmuje wszystkich normalnych rekordów."
+        )
+
+    return fit_indices, calibration_indices
+
+
+def calculate_strict_threshold(
+    calibration_scores,
+    target_fpr: float,
+) -> tuple[float, float]:
+    scores = np.asarray(
+        calibration_scores,
+        dtype=float,
+    )
+
+    if scores.size == 0:
+        raise ValueError(
+            "Zbiór kalibracyjny nie może być pusty."
+        )
+
+    if not 0.0 < target_fpr < 1.0:
+        raise ValueError(
+            "Docelowy FPR musi należeć do przedziału (0, 1)."
+        )
+
+    allowed_false_positives = int(
+        np.floor(target_fpr * len(scores))
+    )
+
+    ordered_scores = np.sort(scores)[::-1]
+    threshold = ordered_scores[
+        allowed_false_positives
+    ]
+
+    calibration_predictions = (
+        scores > threshold
+    )
+
+    calibration_fpr = float(
+        np.mean(calibration_predictions)
+    )
+
+    if calibration_fpr > target_fpr:
+        raise RuntimeError(
+            "Wyznaczony próg przekracza docelowy FPR "
+            "na zbiorze kalibracyjnym."
+        )
+
+    return float(threshold), calibration_fpr
 
 
 def create_model(
@@ -204,16 +320,204 @@ def evaluate_configuration(
             "prediction_time_seconds": (
                 prediction_time
             ),
+            "scenario": ONE_CLASS_SCENARIO,
         }
     )
 
-    return metrics
+    return metrics, y_pred, y_score
+
+
+def evaluate_strict_configuration(
+    df: pd.DataFrame,
+    model_name: str,
+    feature_set_name: str,
+    features: list[str],
+    parameters: dict,
+    fit_indices,
+    calibration_indices,
+    validation_indices,
+    fold_number: int,
+) -> tuple[dict, np.ndarray, np.ndarray]:
+    X_fit = df.loc[fit_indices, features]
+    X_calibration = df.loc[
+        calibration_indices,
+        features,
+    ]
+    X_validation = df.loc[
+        validation_indices,
+        features,
+    ]
+
+    y_validation = df.loc[
+        validation_indices,
+        "classification",
+    ]
+
+    scaler = StandardScaler()
+
+    X_fit_scaled = scaler.fit_transform(X_fit)
+    X_calibration_scaled = scaler.transform(
+        X_calibration
+    )
+    X_validation_scaled = scaler.transform(
+        X_validation
+    )
+
+    model = create_model(
+        model_name,
+        parameters,
+    )
+
+    training_start = perf_counter()
+    model.fit(X_fit_scaled)
+    training_time = perf_counter() - training_start
+
+    prediction_start = perf_counter()
+
+    calibration_scores = -model.decision_function(
+        X_calibration_scaled
+    )
+
+    validation_scores = -model.decision_function(
+        X_validation_scaled
+    )
+
+    normal_mask = (
+        y_validation.to_numpy() == 0
+    )
+
+    anomaly_mask = (
+        y_validation.to_numpy() == 1
+    )
+
+    if not normal_mask.any() or not anomaly_mask.any():
+        raise RuntimeError(
+            "Fold walidacyjny musi zawierać "
+            "rekordy normalne i anomalne."
+        )
+
+    operating_point_metrics = {}
+    primary_predictions = None
+
+    for target_fpr in STRICT_TARGET_FPRS:
+        threshold, calibration_fpr = (
+            calculate_strict_threshold(
+                calibration_scores,
+                target_fpr,
+            )
+        )
+
+        validation_predictions = (
+            validation_scores > threshold
+        ).astype(int)
+
+        validation_fpr = float(
+            np.mean(
+                validation_predictions[normal_mask]
+            )
+        )
+
+        validation_tpr = float(
+            np.mean(
+                validation_predictions[anomaly_mask]
+            )
+        )
+
+        fpr_label = (
+            f"{int(target_fpr * 100)}_percent"
+        )
+
+        operating_point_metrics[
+            f"strict_threshold_{fpr_label}"
+        ] = threshold
+
+        operating_point_metrics[
+            f"strict_calibration_fpr_{fpr_label}"
+        ] = calibration_fpr
+
+        operating_point_metrics[
+            f"strict_validation_fpr_{fpr_label}"
+        ] = validation_fpr
+
+        operating_point_metrics[
+            f"strict_validation_tpr_{fpr_label}"
+        ] = validation_tpr
+
+        if np.isclose(
+            target_fpr,
+            STRICT_PRIMARY_FPR,
+        ):
+            primary_predictions = (
+                validation_predictions
+            )
+
+    if primary_predictions is None:
+        raise RuntimeError(
+            "Nie wyznaczono predykcji dla głównego "
+            "punktu pracy strict one-class."
+        )
+
+    prediction_time = (
+        perf_counter() - prediction_start
+    )
+
+    metrics = calculate_binary_metrics(
+        y_true=y_validation,
+        y_pred=primary_predictions,
+        y_score=validation_scores,
+    )
+
+    metrics.update(operating_point_metrics)
+
+    metrics.update({
+        "fold": fold_number,
+        "scenario": STRICT_ONE_CLASS_SCENARIO,
+        "model": model_name,
+        "feature_set": feature_set_name,
+        "configuration": "FIXED_STRICT",
+        "number_of_features": len(features),
+        "selected_features": ", ".join(features),
+        "parameters": json.dumps(
+            parameters,
+            sort_keys=True,
+        ),
+        "normal_training_samples": len(fit_indices),
+        "normal_calibration_samples": len(
+            calibration_indices
+        ),
+        "validation_samples": len(y_validation),
+        "decision_target_fpr": STRICT_PRIMARY_FPR,
+        "training_time_seconds": training_time,
+        "prediction_time_seconds": prediction_time,
+    })
+
+    expected_primary_fpr = (
+        operating_point_metrics[
+            "strict_validation_fpr_5_percent"
+        ]
+    )
+
+    if not np.isclose(
+        metrics["false_positive_rate"],
+        expected_primary_fpr,
+    ):
+        raise RuntimeError(
+            "FPR głównej predykcji nie zgadza się "
+            "z punktem pracy 5%."
+        )
+
+    return (
+        metrics,
+        primary_predictions,
+        validation_scores,
+    )
 
 
 def create_summary(
     metrics_df: pd.DataFrame,
 ) -> pd.DataFrame:
     grouping_columns = [
+        "scenario",
         "model",
         "feature_set",
         "configuration",
@@ -310,12 +614,108 @@ def create_summary(
                 "pr_auc",
                 "std",
             ),
+            tpr_at_fpr_1_percent_mean=(
+                "tpr_at_fpr_1_percent",
+                "mean",
+            ),
+            tpr_at_fpr_1_percent_std=(
+                "tpr_at_fpr_1_percent",
+                "std",
+            ),
+            tpr_at_fpr_5_percent_mean=(
+                "tpr_at_fpr_5_percent",
+                "mean",
+            ),
+            tpr_at_fpr_5_percent_std=(
+                "tpr_at_fpr_5_percent",
+                "std",
+            ),
+            tpr_at_fpr_10_percent_mean=(
+                "tpr_at_fpr_10_percent",
+                "mean",
+            ),
+            tpr_at_fpr_10_percent_std=(
+                "tpr_at_fpr_10_percent",
+                "std",
+            ),
             training_time_mean=(
                 "training_time_seconds",
                 "mean",
             ),
             training_time_std=(
                 "training_time_seconds",
+                "std",
+            ),
+            normal_training_samples_mean=(
+                "normal_training_samples",
+                "mean",
+            ),
+            normal_calibration_samples_mean=(
+                "normal_calibration_samples",
+                "mean",
+            ),
+            decision_target_fpr=(
+                "decision_target_fpr",
+                "first",
+            ),
+            strict_calibration_fpr_1_percent_mean=(
+                "strict_calibration_fpr_1_percent",
+                "mean",
+            ),
+            strict_validation_fpr_1_percent_mean=(
+                "strict_validation_fpr_1_percent",
+                "mean",
+            ),
+            strict_validation_fpr_1_percent_std=(
+                "strict_validation_fpr_1_percent",
+                "std",
+            ),
+            strict_validation_tpr_1_percent_mean=(
+                "strict_validation_tpr_1_percent",
+                "mean",
+            ),
+            strict_validation_tpr_1_percent_std=(
+                "strict_validation_tpr_1_percent",
+                "std",
+            ),
+            strict_calibration_fpr_5_percent_mean=(
+                "strict_calibration_fpr_5_percent",
+                "mean",
+            ),
+            strict_validation_fpr_5_percent_mean=(
+                "strict_validation_fpr_5_percent",
+                "mean",
+            ),
+            strict_validation_fpr_5_percent_std=(
+                "strict_validation_fpr_5_percent",
+                "std",
+            ),
+            strict_validation_tpr_5_percent_mean=(
+                "strict_validation_tpr_5_percent",
+                "mean",
+            ),
+            strict_validation_tpr_5_percent_std=(
+                "strict_validation_tpr_5_percent",
+                "std",
+            ),
+            strict_calibration_fpr_10_percent_mean=(
+                "strict_calibration_fpr_10_percent",
+                "mean",
+            ),
+            strict_validation_fpr_10_percent_mean=(
+                "strict_validation_fpr_10_percent",
+                "mean",
+            ),
+            strict_validation_fpr_10_percent_std=(
+                "strict_validation_fpr_10_percent",
+                "std",
+            ),
+            strict_validation_tpr_10_percent_mean=(
+                "strict_validation_tpr_10_percent",
+                "mean",
+            ),
+            strict_validation_tpr_10_percent_std=(
+                "strict_validation_tpr_10_percent",
                 "std",
             ),
         )
@@ -325,10 +725,11 @@ def create_summary(
 
 
 def validate_configs_cv10() -> None:
-    df = get_processed_data()
+    df = add_request_groups(get_processed_data())
     folds = get_development_folds(df)
 
     all_metrics = []
+    all_predictions = []
     selection_rows = []
 
     for fold_number, train_indices, validation_indices in folds:
@@ -350,6 +751,132 @@ def validate_configs_cv10() -> None:
         print(f"Trening: {len(train_indices)} rekordów")
         print(f"Walidacja: {len(validation_indices)} rekordów")
         print(f"Wspólne grupy: {group_overlap}")
+
+        strict_fit_indices, strict_calibration_indices = (
+            create_strict_normal_split(
+                df=df,
+                train_indices=train_indices,
+                fold_number=fold_number,
+            )
+        )
+
+        print(
+            "Strict one-class — uczenie: "
+            f"{len(strict_fit_indices)} normalnych rekordów"
+        )
+        print(
+            "Strict one-class — kalibracja: "
+            f"{len(strict_calibration_indices)} normalnych rekordów"
+        )
+
+        strict_feature_sets = {
+            "BASIC": config.ML_FEATURES_BASIC,
+            "ALTHUBITI_9": config.ML_FEATURES_ALTHUBITI_9,
+        }
+
+        strict_experiments = [
+            (
+                "ISOLATION_FOREST",
+                {
+                    **config.ISOLATION_FOREST_PARAMS
+                },
+            ),
+            (
+                "ONE_CLASS_SVM",
+                {
+                    **config.OCSVM_PARAMS
+                },
+            ),
+        ]
+
+        for (
+            strict_feature_set_name,
+            strict_features,
+        ) in strict_feature_sets.items():
+            for (
+                strict_model_name,
+                strict_parameters,
+            ) in strict_experiments:
+                print(
+                    f"{strict_model_name} | "
+                    f"{strict_feature_set_name} | "
+                    "FIXED_STRICT"
+                )
+
+                (
+                    strict_metrics,
+                    strict_y_pred,
+                    strict_y_score,
+                ) = evaluate_strict_configuration(
+                    df=df,
+                    model_name=strict_model_name,
+                    feature_set_name=(
+                        strict_feature_set_name
+                    ),
+                    features=strict_features,
+                    parameters=strict_parameters,
+                    fit_indices=strict_fit_indices,
+                    calibration_indices=(
+                        strict_calibration_indices
+                    ),
+                    validation_indices=validation_indices,
+                    fold_number=fold_number,
+                )
+
+                strict_metrics.update({
+                    "split": "development_group_cv10",
+                    "partition": "development",
+                    "group_overlap": group_overlap,
+                    "protocol_seed": (
+                        config.PROTOCOL_RANDOM_STATE
+                    ),
+                    "final_test_used": False,
+                })
+
+                all_metrics.append(strict_metrics)
+
+                strict_fold_predictions = pd.DataFrame({
+                    "row_id": pd.Index(
+                        validation_indices
+                    ).to_numpy(),
+                    "request_group": df.loc[
+                        validation_indices,
+                        "request_group",
+                    ].to_numpy(),
+                    "classification": df.loc[
+                        validation_indices,
+                        "classification",
+                    ].to_numpy(),
+                    "y_pred": strict_y_pred,
+                    "y_score": strict_y_score,
+                    "model": strict_model_name,
+                    "feature_set": (
+                        strict_feature_set_name
+                    ),
+                    "configuration": "FIXED_STRICT",
+                    "scenario": (
+                        STRICT_ONE_CLASS_SCENARIO
+                    ),
+                    "fold": fold_number,
+                    "split": "development_group_cv10",
+                    "group_overlap": group_overlap,
+                    "protocol_seed": (
+                        config.PROTOCOL_RANDOM_STATE
+                    ),
+                    "final_test_used": False,
+                })
+
+                all_predictions.append(
+                    strict_fold_predictions
+                )
+
+                print(
+                    "  Strict 5% FPR: "
+                    f"TPR="
+                    f"{strict_metrics['strict_validation_tpr_5_percent']:.4f}, "
+                    f"rzeczywisty FPR="
+                    f"{strict_metrics['strict_validation_fpr_5_percent']:.4f}"
+                )
 
         X_selection_train = df.loc[
             train_indices,
@@ -398,6 +925,7 @@ def validate_configs_cv10() -> None:
                 "group_overlap": group_overlap,
                 "protocol_seed": config.PROTOCOL_RANDOM_STATE,
                 "final_test_used": False,
+                "scenario": ONE_CLASS_SCENARIO,
             }
         )
 
@@ -502,7 +1030,7 @@ def validate_configs_cv10() -> None:
                     f"{configuration_name}"
                 )
 
-                metrics = evaluate_configuration(
+                metrics, y_pred, y_score = evaluate_configuration(
                     model_name=model_name,
                     feature_set_name=(
                         feature_set_name
@@ -530,6 +1058,27 @@ def validate_configs_cv10() -> None:
                 metrics["final_test_used"] = False
 
                 all_metrics.append(metrics)
+                fold_predictions = pd.DataFrame({
+                    "row_id": pd.Index(validation_indices).to_numpy(),
+                    "request_group": df.loc[
+                        validation_indices,
+                        "request_group",
+                    ].to_numpy(),
+                    "classification": y_validation.to_numpy(),
+                    "y_pred": y_pred,
+                    "y_score": y_score,
+                    "model": model_name,
+                    "feature_set": feature_set_name,
+                    "configuration": configuration_name,
+                    "scenario": ONE_CLASS_SCENARIO,
+                    "fold": fold_number,
+                    "split": "development_group_cv10",
+                    "group_overlap": group_overlap,
+                    "protocol_seed": config.PROTOCOL_RANDOM_STATE,
+                    "final_test_used": False,
+                })
+
+                all_predictions.append(fold_predictions)
 
                 print(
                     f"  BalAcc="
@@ -541,6 +1090,14 @@ def validate_configs_cv10() -> None:
                     f"FPR="
                     f"{metrics['false_positive_rate']:.4f}"
                 )
+                print(
+                    f"  TPR@FPR 1%="
+                    f"{metrics['tpr_at_fpr_1_percent']:.4f}, "
+                    f"5%="
+                    f"{metrics['tpr_at_fpr_5_percent']:.4f}, "
+                    f"10%="
+                    f"{metrics['tpr_at_fpr_10_percent']:.4f}"
+                )
 
     metrics_df = pd.DataFrame(
         all_metrics
@@ -549,6 +1106,33 @@ def validate_configs_cv10() -> None:
     selection_df = pd.DataFrame(
         selection_rows
     )
+
+    predictions_df = pd.concat(
+        all_predictions,
+        ignore_index=True,
+    )
+
+    expected_records = sum(
+        len(validation_indices)
+        for _, _, validation_indices in folds
+    )
+
+    configuration_counts = (
+        predictions_df
+        .groupby([
+            "scenario",
+            "model",
+            "feature_set",
+            "configuration",
+        ])["row_id"]
+        .nunique()
+    )
+
+    if not (configuration_counts == expected_records).all():
+        raise RuntimeError(
+            "Nie każda konfiguracja zawiera dokładnie jedną "
+            "predykcję OOF dla każdego rekordu development."
+        )
 
     summary_df = create_summary(
         metrics_df
@@ -561,17 +1145,22 @@ def validate_configs_cv10() -> None:
 
     folds_path = (
         config.REPORTS_DIR
-        / "one_class_group_retuned_cv10_configs_folds.csv"
+        / "one_class_group_cv10_configs_folds.csv"
     )
 
     summary_path = (
         config.REPORTS_DIR
-        / "one_class_group_retuned_cv10_configs_summary.csv"
+        / "one_class_group_cv10_configs_summary.csv"
     )
 
     selection_path = (
         config.REPORTS_DIR
-        / "one_class_group_retuned_cv10_selection.csv"
+        / "one_class_group_cv10_selection.csv"
+    )
+
+    predictions_path = (
+            config.REPORTS_DIR
+            / "one_class_group_cv10_oof_predictions.csv.gz"
     )
 
     metrics_df.to_csv(
@@ -589,7 +1178,14 @@ def validate_configs_cv10() -> None:
         index=False,
     )
 
+    predictions_df.to_csv(
+        predictions_path,
+        index=False,
+        compression="gzip",
+    )
+
     columns_to_display = [
+        "scenario",
         "model",
         "feature_set",
         "configuration",
@@ -604,8 +1200,32 @@ def validate_configs_cv10() -> None:
         "roc_auc_mean",
         "roc_auc_std",
         "pr_auc_mean",
+        "tpr_at_fpr_1_percent_mean",
+        "tpr_at_fpr_1_percent_std",
+        "tpr_at_fpr_5_percent_mean",
+        "tpr_at_fpr_5_percent_std",
+        "tpr_at_fpr_10_percent_mean",
+        "tpr_at_fpr_10_percent_std",
         "training_time_mean",
     ]
+
+    strict_columns_to_display = [
+        "scenario",
+        "model",
+        "feature_set",
+        "normal_training_samples_mean",
+        "normal_calibration_samples_mean",
+        "strict_calibration_fpr_1_percent_mean",
+        "strict_validation_fpr_1_percent_mean",
+        "strict_validation_tpr_1_percent_mean",
+        "strict_calibration_fpr_5_percent_mean",
+        "strict_validation_fpr_5_percent_mean",
+        "strict_validation_tpr_5_percent_mean",
+        "strict_calibration_fpr_10_percent_mean",
+        "strict_validation_fpr_10_percent_mean",
+        "strict_validation_tpr_10_percent_mean",
+    ]
+
 
     print("\n" + "=" * 75)
     print("PODSUMOWANIE 10-KROTNEJ WALIDACJI")
@@ -619,10 +1239,27 @@ def validate_configs_cv10() -> None:
         )
     )
 
+    strict_summary_df = summary_df.loc[
+        summary_df["scenario"]
+        == STRICT_ONE_CLASS_SCENARIO
+        ]
+
+    if not strict_summary_df.empty:
+        print("\n" + "=" * 75)
+        print("PUNKTY PRACY STRICT ONE-CLASS")
+        print("=" * 75)
+
+        print(
+            strict_summary_df[
+                strict_columns_to_display
+            ].round(4).to_string(index=False)
+        )
+
     print("\nZapisane pliki:")
     print(f"- {folds_path}")
     print(f"- {summary_path}")
     print(f"- {selection_path}")
+    print(f"- {predictions_path}")
 
 
 if __name__ == "__main__":

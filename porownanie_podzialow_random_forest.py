@@ -59,7 +59,7 @@ def run_rf_experiment(
     validation_indices: pd.Index,
     split_name: str,
     fold_number: int,
-) -> dict:
+) -> tuple[dict, pd.DataFrame]:
     features = list(config.ML_FEATURES_BASIC)
 
     X_train = df.loc[train_indices, features]
@@ -95,8 +95,12 @@ def run_rf_experiment(
         "request_group",
     ]
 
+    group_seen_in_training = validation_groups.isin(
+        train_groups
+    )
+
     validation_records_with_train_group = int(
-        validation_groups.isin(train_groups).sum()
+        group_seen_in_training.sum()
     )
 
     validation_records_with_train_group_rate = (
@@ -125,7 +129,24 @@ def run_rf_experiment(
         y_score=y_score,
     )
 
-    return {
+    fold_predictions = pd.DataFrame(
+        {
+            "row_id": validation_indices.to_numpy(),
+            "request_group": validation_groups.to_numpy(),
+            "classification": y_validation.to_numpy(),
+            "y_pred": y_pred,
+            "y_score": y_score,
+            "group_seen_in_training": (
+                group_seen_in_training.to_numpy()
+            ),
+            "split": split_name,
+            "fold": fold_number,
+            "protocol_seed": config.PROTOCOL_RANDOM_STATE,
+            "final_test_used": False,
+        }
+    )
+
+    fold_metrics = {
         "model": "RANDOM_FOREST",
         "feature_set": "BASIC",
         "split": split_name,
@@ -147,6 +168,8 @@ def run_rf_experiment(
         "final_test_used": False,
         **metrics,
     }
+
+    return fold_metrics, fold_predictions
 
 
 def create_summary(results_df: pd.DataFrame) -> pd.DataFrame:
@@ -196,6 +219,7 @@ def compare_splits() -> None:
     group_folds = get_development_folds(df)
 
     results = []
+    prediction_frames = []
 
     print("\nPORÓWNANIE PODZIAŁÓW NA ZBIORZE DEVELOPMENT")
     print(f"Development: {len(development_indices)} rekordów")
@@ -210,7 +234,7 @@ def compare_splits() -> None:
         print("=" * 70)
 
         for fold_number, train_indices, validation_indices in folds:
-            fold_results = run_rf_experiment(
+            fold_results, fold_predictions = run_rf_experiment(
                 df=df,
                 train_indices=train_indices,
                 validation_indices=validation_indices,
@@ -219,6 +243,7 @@ def compare_splits() -> None:
             )
 
             results.append(fold_results)
+            prediction_frames.append(fold_predictions)
 
             print(
                 f"Fold {fold_number}: "
@@ -231,6 +256,34 @@ def compare_splits() -> None:
             )
 
     results_df = pd.DataFrame(results)
+
+    predictions_df = pd.concat(
+        prediction_frames,
+        ignore_index=True,
+    )
+
+    development_rows = set(development_indices)
+
+    for split_name in ["random_record", "group"]:
+        split_predictions = predictions_df.loc[
+            predictions_df["split"] == split_name
+            ]
+
+        if len(split_predictions) != len(development_indices):
+            raise RuntimeError(
+                f"Nieprawidłowa liczba predykcji OOF dla {split_name}."
+            )
+
+        if not split_predictions["row_id"].is_unique:
+            raise RuntimeError(
+                f"Powtórzone predykcje OOF dla {split_name}."
+            )
+
+        if set(split_predictions["row_id"]) != development_rows:
+            raise RuntimeError(
+                f"Predykcje OOF dla {split_name} nie obejmują "
+                "dokładnie zbioru development."
+            )
 
     random_results = results_df[
         results_df["split"] == "random_record"
@@ -262,9 +315,14 @@ def compare_splits() -> None:
         config.REPORTS_DIR
         / "rf_random_vs_group_cv10_summary.csv"
     )
+    predictions_path = (
+            config.REPORTS_DIR
+            / "rf_random_vs_group_cv10_oof_predictions.csv"
+    )
 
     results_df.to_csv(folds_path, index=False)
     summary_df.to_csv(summary_path, index=False)
+    predictions_df.to_csv(predictions_path, index=False,)
 
     columns_to_display = [
         "split",
@@ -292,7 +350,9 @@ def compare_splits() -> None:
     print("\nZapisane pliki:")
     print(f"- {folds_path}")
     print(f"- {summary_path}")
+    print(f"- {predictions_path}")
     print("\nZbiór final_test nie został użyty.")
+
 
 
 if __name__ == "__main__":
