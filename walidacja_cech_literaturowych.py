@@ -1,9 +1,16 @@
 import config
 from przetwarzanie_danych import get_processed_data
-
+from protokol_eksperymentalny import get_development_indices
 
 def validate_features() -> None:
-    df = get_processed_data()
+    all_data = get_processed_data()
+    development_indices = get_development_indices(all_data)
+    df = all_data.loc[development_indices]
+
+    print(
+        "Walidacja cech wyłącznie na zbiorze development: "
+        f"{len(df)} rekordów"
+    )
 
     feature_sets = {
         "ALTHUBITI_9": (

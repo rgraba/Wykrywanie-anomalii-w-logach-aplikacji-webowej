@@ -226,6 +226,34 @@ class SafeSplitUsageTest(unittest.TestCase):
             ),
         )
 
+    def test_final_test_accessor_is_restricted(self):
+        accessor_name = (
+            "get_development_and_"
+            + "final_test_indices"
+        )
+
+        allowed_files = {
+            "protokol_eksperymentalny.py",
+            "ewaluacja.py",
+        }
+
+        violations = [
+            file_name
+            for file_name, source in self.source_files
+            if (
+                accessor_name in source
+                and file_name not in allowed_files
+            )
+        ]
+
+        self.assertEqual(
+            violations,
+            [],
+            msg=(
+                "Niedozwolone skrypty mają dostęp do indeksów "
+                f"final_test: {violations}"
+            ),
+        )
 
 if __name__ == "__main__":
     unittest.main()

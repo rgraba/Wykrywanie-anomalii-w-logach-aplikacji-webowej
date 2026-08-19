@@ -550,6 +550,19 @@ def load_experimental_protocol(
     return ordered_manifest
 
 
+def get_development_indices(
+    df: pd.DataFrame,
+) -> pd.Index:
+    manifest = load_experimental_protocol(df)
+
+    return pd.Index(
+        manifest.loc[
+            manifest["partition"] == "development",
+            "row_id",
+        ]
+    )
+
+
 def get_development_and_final_test_indices(
     df: pd.DataFrame,
 ) -> tuple[pd.Index, pd.Index]:

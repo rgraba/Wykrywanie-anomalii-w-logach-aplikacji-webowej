@@ -9,10 +9,11 @@ from metryki import calculate_binary_metrics
 from podzial_danych import (
     calculate_group_overlap,
     ensure_no_group_overlap,
+    add_request_groups,
 )
 from protokol_eksperymentalny import (
-    get_development_and_final_test_indices,
     get_development_folds,
+    get_development_indices,
 )
 from przetwarzanie_danych import get_processed_data
 
@@ -82,6 +83,27 @@ def run_rf_experiment(
             validation_indices,
         )
 
+    train_groups = set(
+        df.loc[
+            train_indices,
+            "request_group",
+        ]
+    )
+
+    validation_groups = df.loc[
+        validation_indices,
+        "request_group",
+    ]
+
+    validation_records_with_train_group = int(
+        validation_groups.isin(train_groups).sum()
+    )
+
+    validation_records_with_train_group_rate = (
+            validation_records_with_train_group
+            / len(validation_indices)
+    )
+
     model = RandomForestClassifier(
         **config.RANDOM_FOREST_PARAMS,
         random_state=config.RANDOM_STATE,
@@ -111,6 +133,12 @@ def run_rf_experiment(
         "train_size": len(train_indices),
         "validation_size": len(validation_indices),
         "group_overlap": group_overlap,
+        "validation_records_with_train_group": (
+            validation_records_with_train_group
+        ),
+        "validation_records_with_train_group_rate": (
+            validation_records_with_train_group_rate
+        ),
         "training_time_seconds": training_time,
         "prediction_time_seconds": prediction_time,
         "partition": "development",
@@ -147,16 +175,19 @@ def create_summary(results_df: pd.DataFrame) -> pd.DataFrame:
             pr_auc_std=("pr_auc", "std"),
             training_time_mean=("training_time_seconds", "mean"),
             prediction_time_mean=("prediction_time_seconds", "mean"),
+            validation_records_with_train_group_mean=("validation_records_with_train_group", "mean"),
+            validation_records_with_train_group_rate_mean=("validation_records_with_train_group_rate", "mean"),
+            validation_records_with_train_group_rate_std=("validation_records_with_train_group_rate", "std"),
         )
     )
 
 
 def compare_splits() -> None:
-    df = get_processed_data()
-
-    development_indices, final_test_indices = (
-        get_development_and_final_test_indices(df)
+    df = add_request_groups(
+        get_processed_data()
     )
+
+    development_indices = get_development_indices(df)
 
     random_folds = create_random_record_folds(
         df=df,
@@ -168,10 +199,7 @@ def compare_splits() -> None:
 
     print("\nPORÓWNANIE PODZIAŁÓW NA ZBIORZE DEVELOPMENT")
     print(f"Development: {len(development_indices)} rekordów")
-    print(
-        f"Final test: {len(final_test_indices)} rekordów "
-        "(nie jest używany)"
-    )
+    print("Final test pozostaje zamrożony i nie jest używany.")
 
     for split_name, folds in [
         ("random_record", random_folds),
@@ -195,6 +223,8 @@ def compare_splits() -> None:
             print(
                 f"Fold {fold_number}: "
                 f"overlap={fold_results['group_overlap']}, "
+                f"record_overlap="
+                f"{fold_results['validation_records_with_train_group_rate']:.2%}, "
                 f"BalAcc={fold_results['balanced_accuracy']:.4f}, "
                 f"F1={fold_results['f1_anomaly']:.4f}, "
                 f"ROC AUC={fold_results['roc_auc']:.4f}"
@@ -247,6 +277,7 @@ def compare_splits() -> None:
         "false_positive_rate_mean",
         "roc_auc_mean",
         "pr_auc_mean",
+        "validation_records_with_train_group_rate_mean",
     ]
 
     print("\n" + "=" * 70)

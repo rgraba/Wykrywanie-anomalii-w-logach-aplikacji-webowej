@@ -5,7 +5,7 @@ from sklearn.pipeline import Pipeline
 
 import config
 from protokol_eksperymentalny import (
-    get_development_and_final_test_indices,
+    get_development_indices,
 )
 from przetwarzanie_danych import get_processed_data
 
@@ -21,9 +21,7 @@ def train_rf_tfidf_ngram(
             "Brakuje kolumny request_text."
         )
 
-    development_indices, _ = (
-        get_development_and_final_test_indices(df)
-    )
+    development_indices = get_development_indices(df)
 
     X_train = df.loc[
         development_indices,

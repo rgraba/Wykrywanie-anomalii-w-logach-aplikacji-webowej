@@ -5,7 +5,7 @@ from sklearn.svm import OneClassSVM
 
 import config
 from protokol_eksperymentalny import (
-    get_development_and_final_test_indices,
+    get_development_indices,
 )
 from przetwarzanie_danych import get_processed_data
 
@@ -24,9 +24,7 @@ def train_ocsvm() -> None:
             f"Brakuje cech w danych: {missing_features}"
         )
 
-    development_indices, _ = (
-        get_development_and_final_test_indices(df)
-    )
+    development_indices = get_development_indices(df)
 
     X_development = df.loc[
         development_indices,
