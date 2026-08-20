@@ -1,367 +1,313 @@
 # Wykrywanie anomalii w logach aplikacji webowej
 
-Projekt stanowi część praktyczną pracy magisterskiej poświęconej wykrywaniu anomalii i potencjalnych ataków na podstawie analizy żądań HTTP. Celem projektu jest porównanie klasycznych metod uczenia maszynowego oraz metod jednoklasowych na zbiorze CSIC 2010, a także zbadanie wpływu reprezentacji danych, doboru cech, selekcji cech i strojenia hiperparametrów na skuteczność detekcji.
+Projekt stanowi część praktyczną pracy magisterskiej dotyczącej wykrywania anomalii i potencjalnych ataków na podstawie żądań HTTP ze zbioru CSIC 2010.
 
-W aktualnym zakresie badawczym wykorzystywane są trzy modele:
+Głównym celem projektu nie jest wyłącznie porównanie Random Forest, Isolation Forest i One-Class SVM. Najważniejszym zagadnieniem badawczym jest wpływ duplikatów żądań HTTP oraz sposobu podziału danych na ocenę skuteczności modeli.
 
-* Random Forest — model nadzorowany uczony na próbkach normalnych i anomalnych;
-* Isolation Forest — model detekcji anomalii uczony wyłącznie na próbkach normalnych;
-* One-Class SVM — model jednoklasowy uczony wyłącznie na próbkach normalnych.
+## Pytania badawcze
 
-Projekt obejmuje eksperymenty oparte zarówno na ręcznie skonstruowanych cechach liczbowych, jak i na tekstowej reprezentacji żądań HTTP z wykorzystaniem TF-IDF, znakowych n-gramów oraz redukcji wymiarowości Truncated SVD.
+Projekt odpowiada na trzy główne pytania:
+
+1. **RQ1.** W jakim stopniu losowy podział rekordów zawyża wyniki wykrywania anomalii na zbiorze CSIC 2010 w porównaniu z podziałem uwzględniającym duplikaty?
+2. **RQ2.** Które modele i reprezentacje cech zachowują dobrą skuteczność po zastosowaniu bardziej rygorystycznego, grupowego podziału danych?
+3. **RQ3.** Jak zmieniają się wnioski dotyczące skuteczności Random Forest, Isolation Forest i One-Class SVM po wyeliminowaniu przecieku wynikającego z powtarzających się żądań?
 
 ## Zbiór danych
 
-W projekcie wykorzystano zbiór **CSIC 2010 Web Application Attacks**. Plik wejściowy znajduje się w lokalizacji:
+W projekcie wykorzystano zbiór **CSIC 2010 Web Application Attacks**. Plik wejściowy powinien znajdować się pod ścieżką:
 
 ```text
-data/csic\\\\\\\_database.csv
+data/csic_database.csv
 ```
 
 Wymagane kolumny:
 
-* `Method` — metoda HTTP;
-* `URL` — adres lub ścieżka żądania;
-* `content` — treść żądania;
-* `classification` — etykieta klasy.
+- `Method` — metoda HTTP;
+- `URL` — adres lub ścieżka żądania;
+- `content` — treść żądania;
+- `classification` — etykieta klasy.
 
 Problem został sprowadzony do klasyfikacji binarnej:
 
-* `0` — ruch normalny;
-* `1` — anomalia lub potencjalny atak.
+- `0` — ruch normalny;
+- `1` — anomalia lub potencjalny atak.
 
-Aktualny zbiór zawiera 61 065 rekordów:
+Zbiór zawiera 61 065 rekordów, w tym 36 000 rekordów normalnych i 25 065 anomalii.
 
-* 36 000 próbek normalnych;
-* 25 065 próbek anomalnych.
+## Duplikaty i identyfikator grupy
 
-## Metodologia podziału danych
-
-W projekcie występują dwa rodzaje podziału danych.
-
-### Podział losowy
-
-Podział losowy jest zachowany w eksperymentach bazowych i eksploracyjnych. Pozwala odtworzyć wcześniejsze wyniki oraz pokazać wpływ duplikatów żądań na ocenę modeli. Wyniki takich eksperymentów są oznaczone wartością:
+Grupą jest identyczne żądanie HTTP. Identyfikator `request_group` jest wyznaczany jako skrót SHA-256 jednoznacznej serializacji pól:
 
 ```text
-split = random
+[Method, URL, content]
 ```
 
-### Podział grupowy
+Audyt danych wykazał:
 
-Podział grupowy jest podstawowym protokołem końcowej oceny modeli. Każde żądanie otrzymuje identyfikator grupy będący skrótem SHA-256 kolumny `request\\\\\\\_text`, zbudowanej z metody HTTP, adresu URL i treści żądania. Identyczne żądania trafiają dzięki temu wyłącznie do jednej części danych.
+- 25 608 unikalnych grup żądań;
+- 35 457 rekordów będących dodatkowymi wystąpieniami duplikatów;
+- 37 361 rekordów należących do grup zawierających duplikaty;
+- 1 904 grupy duplikatów;
+- maksymalny rozmiar grupy równy 1000;
+- brak grup zawierających jednocześnie obie etykiety;
+- brak wykrytych kolizji skrótów.
 
-Podział grupowy ogranicza zawyżanie wyników spowodowane występowaniem identycznych rekordów jednocześnie w treningu i teście. Kod kontroluje liczbę wspólnych grup i dla poprawnego podziału wymaga:
+Kolumna `request_text`, wykorzystywana przez reprezentacje tekstowe, powstaje z połączenia metody HTTP, adresu URL i treści żądania. Nie pełni ona roli indeksu rekordu ani identyfikatora podziału.
+
+## Protokół eksperymentalny
+
+Podstawą wszystkich końcowych eksperymentów jest jeden zapisany protokół grupowy. Znajduje się on w plikach:
 
 ```text
-group\\\\\\\_overlap = 0
+splits/experimental_protocol_seed_2026.csv
+splits/experimental_protocol_seed_2026.json
 ```
 
-Zapisany, odtwarzalny podział znajduje się w pliku:
+Plik CSV zawiera przypisanie każdego rekordu do części `development` albo `final_test` oraz numer foldu walidacyjnego dla rekordów `development`. Plik JSON zawiera parametry protokołu, statystyki grup i odcisk danych wejściowych.
+
+### Podział development/final_test
+
+Podział jest wykonywany przez `StratifiedGroupKFold` z `PROTOCOL_RANDOM_STATE = 2026`:
+
+- `development`: 48 852 rekordy, czyli 80% danych;
+- `final_test`: 12 213 rekordów, czyli 20% danych.
+
+Grupy identycznych żądań są niepodzielne. Pomiędzy `development` i `final_test` musi zachodzić:
 
 ```text
-splits/group\\\\\\\_split\\\\\\\_seed\\\\\\\_42.csv
+group_overlap = 0
 ```
 
-Grupowanie eliminuje nakładanie się dokładnie identycznych żądań. Nie jest ono równoznaczne z grupowaniem semantycznie podobnych, ale nieidentycznych żądań.
+Zbiór `final_test` nie jest używany do wyboru modelu, cech, hiperparametrów ani progu decyzyjnego.
 
-## Reprezentacje danych i zestawy cech
+### Walidacja na development
+
+W obrębie `development` stosowana jest 10-krotna `StratifiedGroupKFold`. Każdy rekord występuje dokładnie raz w walidacji OOF, a dla każdego foldu kod sprawdza:
+
+```text
+group_overlap = 0
+```
+
+Wszystkie porównywane modele korzystają z tych samych zapisanych foldów.
+
+### Kontrolowany podział losowy
+
+Zwykły `StratifiedKFold` występuje wyłącznie w `porownanie_podzialow_random_forest.py`. Jest to celowy wariant kontrolny dla RQ1, a nie końcowy protokół oceny.
+
+Eksperyment porównuje na całym zbiorze `development`:
+
+- losowy podział rekordów `random_record`, w którym mierzone jest nakładanie grup;
+- podział `group`, w którym nakładanie grup musi wynosić zero.
+
+Zbiór `final_test` nie jest wykorzystywany w tym porównaniu.
+
+## Automatyczne zabezpieczenia przed przeciekiem
+
+Funkcja `ensure_no_group_overlap()` jest wywoływana przez każdy skrypt korzystający z grupowych foldów. W przypadku wykrycia wspólnej grupy przerywa eksperyment wyjątkiem.
+
+Testy w `tests/test_protokol_eksperymentalny.py` sprawdzają między innymi:
+
+- brak wspólnych grup między `development` i `final_test`;
+- brak wspólnych rekordów i grup w każdym foldzie;
+- pełne i jednokrotne pokrycie `development` przez foldy walidacyjne;
+- zakaz używania wycofanych mechanizmów podziału;
+- ograniczenie zwykłego `StratifiedKFold` do eksperymentu RQ1;
+- obowiązkową kontrolę `group_overlap` przez skrypty korzystające z foldów;
+- ograniczenie dostępu do indeksów `final_test` do protokołu i końcowej ewaluacji.
+
+## Modele i scenariusze uczenia
+
+W projekcie wykorzystywane są trzy modele:
+
+- **Random Forest** — klasyfikator nadzorowany uczony na rekordach normalnych i anomalnych;
+- **Isolation Forest** — model wykrywania anomalii uczony wyłącznie na rekordach normalnych;
+- **One-Class SVM** — model jednoklasowy uczony wyłącznie na rekordach normalnych.
+
+Modele jednoklasowe są analizowane w dwóch oddzielnych scenariuszach.
+
+### Supervised-calibrated one-class
+
+Sam model jest nadal dopasowywany wyłącznie do normalnych rekordów treningowych, ale etykiety anomalii ze zbioru `development` mogą uczestniczyć w porównaniu konfiguracji i wyborze wariantu. Wyniki tego scenariusza opisują model korzystający z dodatkowej informacji nadzorowanej na etapie wyboru.
+
+### Strict one-class
+
+Uczenie oraz kalibracja progu wykorzystują wyłącznie normalne rekordy treningowe. Normalne dane są dzielone grupowo na część dopasowania i kalibracji. Anomalie nie są używane do wyboru parametrów ani progu.
+
+Końcowy próg strict one-class jest kalibrowany do docelowego FPR równego 5%. Niezależnie od tego raportowane są również punkty pracy TPR przy FPR równym 1%, 5% i 10%.
+
+## Reprezentacje i zestawy cech
 
 ### BASIC
 
 Podstawowy zestaw czterech cech liczbowych:
 
-* `url\\\\\\\_len`;
-* `content\\\\\\\_len`;
-* `url\\\\\\\_special\\\\\\\_chars`;
-* `content\\\\\\\_special\\\\\\\_chars`.
+- `url_len`;
+- `content_len`;
+- `url_special_chars`;
+- `content_special_chars`.
 
-### ALTHUBITI\_9
+### ALTHUBITI_9
 
-Zestaw dziewięciu cech odtworzonych na podstawie rozwiązania opisanego w literaturze:
+Zestaw dziewięciu cech odtworzonych na podstawie literatury:
 
-* `request\\\\\\\_length`;
-* `arguments\\\\\\\_length`;
-* `arguments\\\\\\\_count`;
-* `arguments\\\\\\\_digit\\\\\\\_count`;
-* `path\\\\\\\_length`;
-* `arguments\\\\\\\_letter\\\\\\\_count`;
-* `path\\\\\\\_letter\\\\\\\_count`;
-* `path\\\\\\\_special\\\\\\\_char\\\\\\\_count`;
-* `max\\\\\\\_request\\\\\\\_byte`.
+- `request_length`;
+- `arguments_length`;
+- `arguments_count`;
+- `arguments_digit_count`;
+- `path_length`;
+- `arguments_letter_count`;
+- `path_letter_count`;
+- `path_special_char_count`;
+- `max_request_byte`.
 
-### ALTHUBITI\_5
+### ALTHUBITI_5
 
 Pięcioelementowy podzbiór cech literaturowych:
 
-* `request\\\\\\\_length`;
-* `arguments\\\\\\\_length`;
-* `arguments\\\\\\\_count`;
-* `path\\\\\\\_length`;
-* `path\\\\\\\_special\\\\\\\_char\\\\\\\_count`.
+- `request_length`;
+- `arguments_length`;
+- `arguments_count`;
+- `path_length`;
+- `path_special_char_count`.
 
-### ADVANCED
+### ADVANCED i reprezentacje tekstowe
 
-Opcjonalny zestaw rozszerzony zawiera cechy BASIC oraz flagi wzorców SQL Injection, XSS i Path Traversal. Nie jest on domyślnym zestawem cech modeli bazowych i nie stanowi podstawy końcowego porównania.
+Zestaw ADVANCED rozszerza BASIC o flagi SQL Injection, XSS i Path Traversal. Repozytorium zawiera również eksperymenty TF-IDF oparte na znakowych n-gramach, a w modelach jednoklasowych dodatkowo na Truncated SVD i standaryzacji.
 
-### Reprezentacja tekstowa
-
-Kolumna `request\\\\\\\_text` powstaje przez połączenie:
-
-```text
-Method + URL + content
-```
-
-Jest ona wykorzystywana przez modele TF-IDF. Random Forest pracuje bezpośrednio na znakowych n-gramach TF-IDF, natomiast Isolation Forest i One-Class SVM wykorzystują dodatkowo Truncated SVD i standaryzację.
+Są to eksperymenty uzupełniające. Nie zastępują głównego protokołu grupowego i nie powinny być przedstawiane jako wyniki końcowe, jeżeli korzystają z historycznego podziału rekordów.
 
 ## Selekcja cech
 
-Projekt implementuje trzy metody selekcji cech:
+Projekt implementuje:
 
-* **Information Gain** — wykorzystuje informację wzajemną; wybierane są cechy z wynikiem większym od średniej;
-* **L1** — wykorzystuje pipeline `StandardScaler` + `LogisticRegression` (`l1\_ratio=1.0) oraz `GridSearchCV` z 5-krotnym `StratifiedGroupKFold` do grupowego doboru parametru `C`;
-* **RF importance** — wykorzystuje ważność cech wyznaczoną przez Random Forest; wybierane są cechy o ważności większej od średniej.
+- **Information Gain** — wybór na podstawie informacji wzajemnej;
+- **L1/LASSO** — pipeline `StandardScaler` i `LogisticRegression` z regularyzacją L1;
+- **RF importance** — wybór na podstawie ważności cech Random Forest;
+- stałe zestawy BASIC, ALTHUBITI_5 i ALTHUBITI_9.
 
-Selekcja jest wykonywana wyłącznie na danych treningowych danego eksperymentu lub foldu. Jeżeli żadna cecha nie przekroczy progu, wybierana jest cecha z najwyższym wynikiem.
+Selekcja jest wykonywana osobno na części treningowej każdego zewnętrznego foldu. Skalowanie jest dopasowywane wyłącznie na danych treningowych. Dobór parametru `C` dla L1 odbywa się w wewnętrznej, 5-krotnej `StratifiedGroupKFold`, do której przekazywane są grupy żądań.
 
-## Metryki
+## Metryki i niepewność
 
-Wspólny moduł ewaluacji oblicza:
+Wspólny moduł `metryki.py` oblicza:
 
-* accuracy;
-* balanced accuracy;
-* precision dla klasy anomalii;
-* recall dla klasy anomalii;
-* F1 dla klasy anomalii;
-* specificity;
-* false positive rate;
-* ROC AUC;
-* PR AUC;
-* liczby TN, FP, FN i TP.
+- accuracy;
+- balanced accuracy;
+- precision, recall i F1 dla klasy anomalii;
+- specificity i false positive rate;
+- ROC AUC;
+- Average Precision;
+- TPR przy FPR równym 1%, 5% i 10%;
+- liczby TN, FP, FN i TP.
 
-Pole `pr\\\\\\\_auc` jest w kodzie obliczane za pomocą `average\\\\\\\_precision\\\\\\\_score`, dlatego w opisie pracy należy określać je jako **Average Precision (AP)** lub wyraźnie zaznaczyć przyjęty sposób obliczenia PR AUC.
+Pole `pr_auc` jest obliczane funkcją `average_precision_score`, dlatego w pracy należy nazywać je **Average Precision (AP)** albo wyraźnie podać przyjętą definicję.
 
-W części skryptów mierzone są również czasy treningu i predykcji.
+Wyniki 10-krotnej walidacji są raportowane jako średnia i odchylenie standardowe. Dla głównych różnic między metodami wyznaczane są 95-procentowe przedziały ufności za pomocą sparowanego bootstrapu grupowego:
 
-## Struktura projektu
+- jednostką losowania jest cała grupa identycznych żądań;
+- porównywane metody korzystają z tej samej próby bootstrapowej;
+- domyślna liczba iteracji wynosi 2000;
+- różnice są liczone dla tych samych rekordów i foldów.
 
-```text
-Wykrywanie-anomalii-w-logach-aplikacji-webowej/
-├── data/
-│   └── csic\\\\\\\_database.csv
-├── models/                         # zapisane modele i zbiory testowe
-├── reports/                        # wyniki CSV i wykresy
-├── artifacts/                      # miejsce na dodatkowe artefakty
-├── splits/
-│   └── group\\\\\\\_split\\\\\\\_seed\\\\\\\_42.csv
-├── result tables/                  # archiwalne zestawienia wyników w PDF
-├── sources/                        # publikacje i materiały źródłowe
-├── cechy\\\\\\\_literaturowe.py
-├── config.py
-├── ewaluacja.py
-├── metryki.py
-├── model\\\\\\\_iforest.py
-├── model\\\\\\\_iforest\\\\\\\_tfidf\\\\\\\_2gram\\\\\\\_svd.py
-├── model\\\\\\\_ocsvm.py
-├── model\\\\\\\_ocsvm\\\\\\\_tfidf\\\\\\\_2gram\\\\\\\_svd.py
-├── model\\\\\\\_rand\\\\\\\_forest.py
-├── model\\\\\\\_rand\\\\\\\_forest\\\\\\\_tfidf\\\\\\\_ngram.py
-├── podzial\\\\\\\_danych.py
-├── porownanie\\\\\\\_cech\\\\\\\_modeli\\\\\\\_jednoklasowych.py
-├── porownanie\\\\\\\_cech\\\\\\\_random\\\\\\\_forest.py
-├── porownanie\\\\\\\_podzialow\\\\\\\_random\\\\\\\_forest.py
-├── porownanie\\\\\\\_selekcji\\\\\\\_cech\\\\\\\_random\\\\\\\_forest.py
-├── przetwarzanie\\\\\\\_danych.py
-├── przygotowanie\\\\\\\_podzialu.py
-├── selekcja\\\\\\\_cech.py
-├── strojenie\\\\\\\_modeli\\\\\\\_jednoklasowych.py
-├── walidacja\\\\\\\_cech\\\\\\\_literaturowych.py
-├── walidacja\\\\\\\_modeli\\\\\\\_jednoklasowych\\\\\\\_cv10.py
-├── walidacja\\\\\\\_selekcji\\\\\\\_cech\\\\\\\_random\\\\\\\_forest\\\\\\\_cv10.py
-├── requirements.txt
-└── README.md
-```
+Wyniki wariantów dobieranych na podstawie tych samych foldów `development` są wynikami etapu wyboru modelu, a nie niezależną oceną końcową. Podstawą oceny potwierdzającej pozostaje zamrożony `final_test`.
 
-Katalogi `models`, `reports` i `artifacts` są tworzone automatycznie, gdy są potrzebne.
+## Zamrożone konfiguracje końcowe
 
-## Opis modułów
+Po zakończeniu analiz na `development` konfiguracje końcowe zostały zapisane jawnie w `config.py`:
 
-### `config.py`
+- Random Forest: zestaw `INFORMATION_GAIN` z cechami `request_length`, `arguments_length` i `arguments_letter_count`;
+- Isolation Forest, supervised-calibrated: `ALTHUBITI_9`;
+- One-Class SVM, supervised-calibrated: `BASIC`;
+- Isolation Forest, strict: `BASIC`, próg kalibrowany na normalnych rekordach do FPR 5%;
+- One-Class SVM, strict: `BASIC`, próg kalibrowany na normalnych rekordach do FPR 5%.
 
-Centralny plik konfiguracyjny projektu. Definiuje ścieżki do danych, modeli, raportów, artefaktów i zapisanego podziału grupowego. Zawiera nazwy wymaganych kolumn, zestawy cech BASIC, ADVANCED, ALTHUBITI\_9 i ALTHUBITI\_5, wzorce bezpieczeństwa, ziarno losowości, rozmiar testu oraz domyślne hiperparametry Random Forest, Isolation Forest i One-Class SVM.
+Stałe `FINAL_*` są celowo ręcznie zamrożonym zapisem decyzji podjętych przed otwarciem `final_test`. Nie należy ich automatycznie aktualizować po wykonaniu końcowej ewaluacji. Jeżeli dane, protokół lub finalne konfiguracje zostaną później zmienione, będzie to nowy eksperyment, a nie kontynuacja tej samej oceny końcowej.
 
-Zmiany wspólnych parametrów eksperymentów należy w pierwszej kolejności wykonywać właśnie w tym pliku.
+Konfiguracje określane jako `TUNED` są wybierane na `development`. Ich wyniki walidacyjne mogą zawierać niewielki optymizm selekcyjny, ponieważ wybór konfiguracji i jej podsumowanie korzystają z tych samych 10 foldów. Nie narusza to niezależności zamrożonego `final_test`, ale wyniki `TUNED` należy opisywać jako etap wyboru modelu, a nie jako niezależny wynik końcowy.
 
-### `przetwarzanie\\\\\\\_danych.py`
+## Najważniejsze moduły
 
-Odpowiada za kompletny proces przygotowania danych:
+- `config.py` — ścieżki, ziarna, parametry modeli, zestawy cech i zamrożone konfiguracje końcowe;
+- `przetwarzanie_danych.py` — wczytywanie, czyszczenie i ekstrakcja cech;
+- `podzial_danych.py` — tworzenie grup żądań i kontrola nakładania grup;
+- `protokol_eksperymentalny.py` — zapis i odczyt podziału `development`/`final_test` oraz 10 foldów grupowych;
+- `metryki.py` — wspólna implementacja metryk;
+- `selekcja_cech.py` — Information Gain, L1 i RF importance;
+- `porownanie_podzialow_random_forest.py` — kontrolowane porównanie `random_record` z `group` dla RQ1;
+- `analiza_niepewnosci.py` — grupowy bootstrap różnicy między podziałami;
+- `walidacja_selekcji_cech_random_forest_cv10.py` — grupowa walidacja zestawów i selekcji cech Random Forest;
+- `walidacja_modeli_jednoklasowych_cv10.py` — grupowa walidacja modeli jednoklasowych w scenariuszu strict i supervised-calibrated;
+- `porownanie_modeli_cv10.py` — sparowane porównanie modeli na predykcjach OOF i grupowy bootstrap;
+- `ewaluacja.py` — test implementacji na `development` oraz jednorazowa ewaluacja `final_test`;
+- `tests/test_protokol_eksperymentalny.py` — testy protokołu i bezpiecznego użycia podziałów.
 
-* wczytuje `data/csic\\\\\\\_database.csv`;
-* sprawdza obecność wymaganych kolumn;
-* uzupełnia brakujące wartości tekstowe;
-* tworzy podstawowe cechy długości i liczby znaków specjalnych;
-* tworzy opcjonalne flagi bezpieczeństwa;
-* buduje kolumnę `request\\\\\\\_text`;
-* dodaje cechy literaturowe;
-* koduje etykiety do formatu `0/1`.
-
-Funkcja `get\\\\\\\_processed\\\\\\\_data()` jest głównym punktem wejścia używanym przez pozostałe moduły.
-
-### `cechy\\\\\\\_literaturowe.py`
-
-Implementuje ekstrakcję dziewięciu cech inspirowanych literaturą. Moduł oczyszcza URL z końcówki wersji HTTP, rozdziela ścieżkę i query string, łączy argumenty URL z treścią żądania, a następnie oblicza długości, liczby argumentów, liter, cyfr, znaków specjalnych oraz maksymalną wartość bajtu.
-
-### `podzial\\\\\\\_danych.py`
-
-Zawiera wspólną obsługę podziałów danych:
-
-* tworzy skrót SHA-256 żądania;
-* przypisuje rekordy do grup;
-* tworzy i zapisuje podział grupowy;
-* wczytuje zapisany podział i sprawdza jego zgodność z danymi;
-* tworzy podział losowy;
-* zwraca indeksy wybranego rodzaju podziału;
-* oblicza liczbę wspólnych grup między treningiem i testem.
-
-### `przygotowanie\\\\\\\_podzialu.py`
-
-Skrypt uruchomieniowy tworzący odtwarzalny podział grupowy. Przetwarza dane, wywołuje funkcję podziału i zapisuje wynik w `splits/group\\\\\\\_split\\\\\\\_seed\\\\\\\_42.csv`. Należy go uruchomić ponownie po każdej zmianie danych wejściowych lub sposobu budowania `request\\\\\\\_text`.
-
-### `metryki.py`
-
-Udostępnia wspólną funkcję obliczania metryk klasyfikacji binarnej. Zapewnia identyczny sposób liczenia wyników we wszystkich eksperymentach. Zawiera również konwersję predykcji modeli jednoklasowych z formatu `1/-1` na etykiety projektu `0/1`.
-
-### `selekcja\\\\\\\_cech.py`
-
-Implementuje Information Gain, selekcję opartą na regularyzacji L1 oraz selekcję na podstawie ważności cech Random Forest. Zwraca listę wybranych cech i szczegółowe oceny potrzebne do analizy stabilności selekcji.
-
-### `walidacja\\\\\\\_cech\\\\\\\_literaturowych.py`
-
-Sprawdza poprawność zestawów ALTHUBITI\_9 i ALTHUBITI\_5. Kontroluje obecność cech, brak wartości pustych i ujemnych, wyświetla statystyki opisowe oraz potwierdza, że ALTHUBITI\_5 jest podzbiorem ALTHUBITI\_9.
-
-### `model\\\\\\\_rand\\\\\\\_forest.py`
-
-Bazowy model Random Forest wykorzystujący ręcznie utworzone cechy wskazane przez `config.ML\\\\\\\_FEATURES`. Stosuje historyczny, losowy podział 80/20, trenuje model na obu klasach, zapisuje model i zbiór testowy w katalogu `models` oraz wyświetla ważność cech.
-
-### `model\\\\\\\_iforest.py`
-
-Bazowy Isolation Forest na cechach liczbowych. Stosuje historyczny, losowy podział 80/20, ale model trenuje wyłącznie na normalnych rekordach części treningowej. Zapisuje model i zbiór testowy w katalogu `models`.
-
-### `model\\\\\\\_ocsvm.py`
-
-Bazowy One-Class SVM na cechach liczbowych. Stosuje historyczny, losowy podział 80/20. Pipeline zawiera `StandardScaler` i One-Class SVM, a uczenie odbywa się wyłącznie na normalnych rekordach części treningowej. Model i zbiór testowy są zapisywane w katalogu `models`.
-
-### `ewaluacja.py`
-
-Wczytuje trzy zapisane modele bazowe i odpowiadające im zbiory testowe. Generuje raporty klasyfikacji, wspólną tabelę metryk, macierze pomyłek oraz krzywe ROC.
-
-Ten moduł dotyczy wyłącznie historycznego podziału losowego 80/20. Wygenerowanych przez niego wykresów nie należy przedstawiać jako wyników końcowego podziału grupowego.
-
-### `porownanie\\\\\\\_podzialow\\\\\\\_random\\\\\\\_forest.py`
-
-Uruchamia ten sam model Random Forest z zestawem BASIC na podziale losowym i grupowym 80/20. Porównuje wyniki oraz liczbę wspólnych grup. Eksperyment pokazuje, jak duplikaty żądań wpływają na ocenę modelu.
-
-### `porownanie\\\\\\\_cech\\\\\\\_random\\\\\\\_forest.py`
-
-Eksperyment eksploracyjny porównujący zestawy BASIC, ALTHUBITI\_9 i ALTHUBITI\_5 dla Random Forest. Korzysta z losowego podziału 60/40, oblicza metryki, czasy oraz ważność cech. Wyniki mają jawne oznaczenie `split=random`.
-
-### `porownanie\\\\\\\_selekcji\\\\\\\_cech\\\\\\\_random\\\\\\\_forest.py`
-
-Eksperyment eksploracyjny porównujący brak selekcji, literaturowy podzbiór pięciu cech, Information Gain, L1 i RF importance. Selekcja jest wykonywana na treningu, a ocena odbywa się na losowym podziale 60/40. Moduł zapisuje zarówno metryki, jak i szczegółowe oceny cech.
-
-### `walidacja\\\\\\\_selekcji\\\\\\\_cech\\\\\\\_random\\\\\\\_forest\\\\\\\_cv10.py`
-
-Końcowa walidacja wpływu selekcji cech dla Random Forest. Wykorzystuje 10-krotną `StratifiedGroupKFold`, wykonuje selekcję osobno w każdym foldzie i kontroluje brak nakładania się grup. Zapisuje wyniki poszczególnych foldów, średnie i odchylenia standardowe, oceny cech, stabilność selekcji oraz parametry L1.
-
-### `porownanie\\\\\\\_cech\\\\\\\_modeli\\\\\\\_jednoklasowych.py`
-
-Porównuje Isolation Forest i One-Class SVM na zestawach BASIC, ALTHUBITI\_9 oraz zestawach wybranych przez Information Gain i RF importance. Wykorzystuje grupowy podział 60/40. Selekcja odbywa się wyłącznie na treningu, a modele są uczone wyłącznie na normalnych rekordach.
-
-### `strojenie\\\\\\\_modeli\\\\\\\_jednoklasowych.py`
-
-Odpowiada za strojenie Isolation Forest i One-Class SVM. Tworzy rozłączne grupowo zbiory treningowy, walidacyjny i testowy. Selekcja cech oraz wybór hiperparametrów odbywają się bez używania zbioru testowego. Po wybraniu parametrów model jest ponownie uczony na zewnętrznym treningu i oceniany na końcowym teście.
-
-Moduł zapisuje pełne wyniki przeszukiwania siatki oraz końcowe wyniki najlepszych konfiguracji.
-
-### `walidacja\\\\\\\_modeli\\\\\\\_jednoklasowych\\\\\\\_cv10.py`
-
-Wykonuje 10-krotną walidację grupową Isolation Forest i One-Class SVM. Porównuje konfiguracje domyślne z konfiguracjami dostrojonymi dla poszczególnych zestawów cech. Selekcja Information Gain i RF importance jest powtarzana na treningu każdego foldu. Moduł zapisuje wyniki foldów, zbiorcze średnie i odchylenia standardowe oraz stabilność wybranych zestawów cech.
-
-Stałe `TUNED\\\\\\\_ISOLATION\\\\\\\_FOREST` i `TUNED\\\\\\\_ONE\\\\\\\_CLASS\\\\\\\_SVM` powinny odpowiadać wynikom ostatniego uruchomienia `strojenie\\\\\\\_modeli\\\\\\\_jednoklasowych.py`.
-
-### `model\\\\\\\_rand\\\\\\\_forest\\\\\\\_tfidf\\\\\\\_ngram.py`
-
-Trenuje nadzorowany Random Forest na tekstowej reprezentacji żądań HTTP. Pipeline wykorzystuje znakowy `TfidfVectorizer` i Random Forest. Obsługuje podział losowy lub grupowy, zapisuje parametry reprezentacji, metryki, liczebności zbiorów i `group\\\\\\\_overlap`.
-
-### `model\\\\\\\_iforest\\\\\\\_tfidf\\\\\\\_2gram\\\\\\\_svd.py`
-
-Trenuje Isolation Forest na tekstowej reprezentacji żądań. Pipeline obejmuje znakowe n-gramy TF-IDF, Truncated SVD, `StandardScaler` i Isolation Forest. Model jest uczony wyłącznie na normalnych żądaniach treningowych. Skrypt zapisuje parametry i komplet metryk.
-
-### `model\\\\\\\_ocsvm\\\\\\\_tfidf\\\\\\\_2gram\\\\\\\_svd.py`
-
-Trenuje One-Class SVM na tekstowej reprezentacji żądań. Pipeline obejmuje znakowe n-gramy TF-IDF, Truncated SVD, `StandardScaler` i One-Class SVM z jądrem RBF. Model jest uczony wyłącznie na normalnych żądaniach treningowych. Skrypt zapisuje parametry i komplet metryk.
+Plik `ewaluacja_80_20.py` oraz część skryptów `model_*.py` i starszych skryptów porównawczych służą do odtworzenia etapów historycznych lub eksperymentów uzupełniających. Nie są główną ścieżką końcowej metodologii.
 
 ## Pliki wynikowe
 
-Wyniki są zapisywane w katalogu `reports`.
+Wyniki są zapisywane w katalogu `reports/`, który jest ignorowany przez Git. Dzięki temu ponowne uruchomienie eksperymentów nie zaśmieca historii repozytorium. Ważne wyniki należy zachować poza katalogiem roboczym i wykorzystać podczas tworzenia końcowego raportu.
 
-|Skrypt|Pliki wynikowe|
-|-|-|
-|`przygotowanie\\\\\\\_podzialu.py`|`splits/group\\\\\\\_split\\\\\\\_seed\\\\\\\_42.csv`|
-|`model\\\\\\\_rand\\\\\\\_forest.py`|`models/rf\\\\\\\_model.pkl`, `models/test\\\\\\\_data\\\\\\\_rf.pkl`|
-|`model\\\\\\\_iforest.py`|`models/iforest\\\\\\\_model.pkl`, `models/test\\\\\\\_data\\\\\\\_if.pkl`|
-|`model\\\\\\\_ocsvm.py`|`models/ocsvm\\\\\\\_model.pkl`, `models/test\\\\\\\_data\\\\\\\_oc.pkl`|
-|`ewaluacja.py`|`metrics\\\\\\\_summary\\\\\\\_random\\\\\\\_80\\\\\\\_20.csv`, `confusion\\\\\\\_matrices\\\\\\\_random\\\\\\\_80\\\\\\\_20.png`, `roc\\\\\\\_curves\\\\\\\_random\\\\\\\_80\\\\\\\_20.png`|
-|`porownanie\\\\\\\_podzialow\\\\\\\_random\\\\\\\_forest.py`|`rf\\\\\\\_split\\\\\\\_comparison.csv`|
-|`porownanie\\\\\\\_cech\\\\\\\_random\\\\\\\_forest.py`|`rf\\\\\\\_literature\\\\\\\_features\\\\\\\_random\\\\\\\_60\\\\\\\_40.csv`, `rf\\\\\\\_literature\\\\\\\_feature\\\\\\\_importances\\\\\\\_random.csv`|
-|`porownanie\\\\\\\_selekcji\\\\\\\_cech\\\\\\\_random\\\\\\\_forest.py`|`rf\\\\\\\_feature\\\\\\\_selection\\\\\\\_random\\\\\\\_60\\\\\\\_40.csv`, `rf\\\\\\\_feature\\\\\\\_selection\\\\\\\_scores\\\\\\\_random.csv`|
-|`walidacja\\\\\\\_selekcji\\\\\\\_cech\\\\\\\_random\\\\\\\_forest\\\\\\\_cv10.py`|`rf\\\\\\\_feature\\\\\\\_selection\\\\\\\_group\\\\\\\_cv10\\\\\\\_folds.csv`, `rf\\\\\\\_feature\\\\\\\_selection\\\\\\\_group\\\\\\\_cv10\\\\\\\_summary.csv`, `rf\\\\\\\_feature\\\\\\\_selection\\\\\\\_group\\\\\\\_cv10\\\\\\\_scores.csv`, `rf\\\\\\\_feature\\\\\\\_selection\\\\\\\_group\\\\\\\_cv10\\\\\\\_stability.csv`, `rf\\\\\\\_feature\\\\\\\_selection\\\\\\\_group\\\\\\\_cv10\\\\\\\_l1\\\\\\\_parameters.csv`|
-|`porownanie\\\\\\\_cech\\\\\\\_modeli\\\\\\\_jednoklasowych.py`|`one\\\\\\\_class\\\\\\\_group\\\\\\\_literature\\\\\\\_features\\\\\\\_60\\\\\\\_40.csv`|
-|`strojenie\\\\\\\_modeli\\\\\\\_jednoklasowych.py`|`one\\\\\\\_class\\\\\\\_group\\\\\\\_parameter\\\\\\\_search\\\\\\\_validation.csv`, `one\\\\\\\_class\\\\\\\_group\\\\\\\_tuned\\\\\\\_test\\\\\\\_60\\\\\\\_40.csv`|
-|`walidacja\\\\\\\_modeli\\\\\\\_jednoklasowych\\\\\\\_cv10.py`|`one\\\\\\\_class\\\\\\\_group\\\\\\\_retuned\\\\\\\_cv10\\\\\\\_configs\\\\\\\_folds.csv`, `one\\\\\\\_class\\\\\\\_group\\\\\\\_retuned\\\\\\\_cv10\\\\\\\_configs\\\\\\\_summary.csv`, `one\\\\\\\_class\\\\\\\_group\\\\\\\_retuned\\\\\\\_cv10\\\\\\\_selection.csv`|
-|`model\\\\\\\_rand\\\\\\\_forest\\\\\\\_tfidf\\\\\\\_ngram.py`|`random\\\\\\\_forest\\\\\\\_tfidf\\\\\\\_ngram\\\\\\\_group.csv` albo wariant `random`|
-|`model\\\\\\\_iforest\\\\\\\_tfidf\\\\\\\_2gram\\\\\\\_svd.py`|`isolation\\\\\\\_forest\\\\\\\_tfidf\\\\\\\_2gram\\\\\\\_svd\\\\\\\_group.csv` albo wariant `random`|
-|`model\\\\\\\_ocsvm\\\\\\\_tfidf\\\\\\\_2gram\\\\\\\_svd.py`|`one\\\\\\\_class\\\\\\\_svm\\\\\\\_tfidf\\\\\\\_2gram\\\\\\\_svd\\\\\\\_group.csv` albo wariant `random`|
-
-## Wymagania
-
-Projekt został przygotowany dla:
+### RQ1: podział losowy i grupowy
 
 ```text
-Python 3.14.6
+reports/rf_random_vs_group_cv10_folds.csv
+reports/rf_random_vs_group_cv10_summary.csv
+reports/rf_random_vs_group_cv10_oof_predictions.csv
+reports/rf_random_vs_group_group_bootstrap_samples.csv
+reports/rf_random_vs_group_group_bootstrap_summary.csv
 ```
 
-Główne zależności są zapisane w `requirements.txt`:
+### Selekcja cech Random Forest
 
 ```text
-numpy==2.5.1
-pandas==3.0.5
-scipy==1.18.0
-scikit-learn==1.9.0
-matplotlib==3.11.1
-seaborn==0.13.2
-joblib==1.5.3
+reports/rf_feature_selection_group_cv10_folds.csv
+reports/rf_feature_selection_group_cv10_summary.csv
+reports/rf_feature_selection_group_cv10_scores.csv
+reports/rf_feature_selection_group_cv10_stability.csv
+reports/rf_feature_selection_group_cv10_l1_parameters.csv
 ```
 
-## Instalacja
+### Modele jednoklasowe
 
-Repozytorium należy sklonować, a następnie otworzyć jego główny katalog w PyCharmie lub terminalu:
+```text
+reports/one_class_group_cv10_configs_folds.csv
+reports/one_class_group_cv10_configs_summary.csv
+reports/one_class_group_cv10_selection.csv
+reports/one_class_group_cv10_oof_predictions.csv.gz
+```
+
+### Porównanie modeli
+
+```text
+reports/model_comparison_group_cv10_bootstrap_samples.csv.gz
+reports/model_comparison_group_cv10_bootstrap_model_summary.csv
+reports/model_comparison_group_cv10_bootstrap_pairwise_summary.csv
+```
+
+### Jednorazowa ewaluacja final_test
+
+```text
+reports/final_test_metrics_seed_2026.csv
+reports/final_test_predictions_seed_2026.csv.gz
+```
+
+Tabela wyników do pracy i raport dla prowadzącego powinny zostać utworzone dopiero po ponownym wygenerowaniu i kontroli wszystkich wyników `development`. Istniejących plików `final_test` nie należy przy tym nadpisywać ani ponownie generować.
+
+## Wymagania i instalacja
+
+Projekt został przygotowany dla Pythona 3.14.6. Zależności są przypięte w `requirements.txt`.
 
 ```bash
 git clone https://github.com/rgraba/Wykrywanie-anomalii-w-logach-aplikacji-webowej.git
 cd Wykrywanie-anomalii-w-logach-aplikacji-webowej
-```
-
-Utworzenie środowiska wirtualnego:
-
-```bash
+git switch wersja-poprawiona
 python -m venv .venv
 ```
 
-Aktywacja w Windows PowerShell:
+Aktywacja środowiska w Windows PowerShell:
 
 ```powershell
-.venv\\\\\\\\Scripts\\\\\\\\Activate.ps1
+.venv\Scripts\Activate.ps1
 ```
 
 Instalacja zależności:
@@ -376,119 +322,77 @@ Wszystkie polecenia należy wykonywać z głównego katalogu projektu.
 
 ## Zalecana kolejność uruchamiania
 
-### 1\. Kontrola przetwarzania danych
-
-```bash
-python przetwarzanie\\\\\\\_danych.py
-python walidacja\\\\\\\_cech\\\\\\\_literaturowych.py
-```
-
-### 2\. Przygotowanie odtwarzalnego podziału grupowego
-
-```bash
-python przygotowanie\\\\\\\_podzialu.py
-python porownanie\\\\\\\_podzialow\\\\\\\_random\\\\\\\_forest.py
-```
-
-### 3\. Odtworzenie historycznych modeli bazowych
-
-Ten etap jest opcjonalny i dotyczy podziału losowego 80/20:
-
-```bash
-python model\\\\\\\_rand\\\\\\\_forest.py
-python model\\\\\\\_iforest.py
-python model\\\\\\\_ocsvm.py
-python ewaluacja.py
-```
-
-### 4\. Eksperymenty eksploracyjne dotyczące cech
-
-Te skrypty wykorzystują podział losowy 60/40 i służą pokazaniu rozwoju metodologii:
-
-```bash
-python porownanie\\\\\\\_cech\\\\\\\_random\\\\\\\_forest.py
-python porownanie\\\\\\\_selekcji\\\\\\\_cech\\\\\\\_random\\\\\\\_forest.py
-```
-
-### 5\. Końcowa walidacja selekcji cech Random Forest
-
-```bash
-python walidacja\\\\\\\_selekcji\\\\\\\_cech\\\\\\\_random\\\\\\\_forest\\\\\\\_cv10.py
-```
-
-### 6\. Analiza i strojenie modeli jednoklasowych
-
-```bash
-python porownanie\\\\\\\_cech\\\\\\\_modeli\\\\\\\_jednoklasowych.py
-python strojenie\\\\\\\_modeli\\\\\\\_jednoklasowych.py
-```
-
-Po strojeniu należy sprawdzić, czy parametry zapisane w `TUNED\\\\\\\_ISOLATION\\\\\\\_FOREST` i `TUNED\\\\\\\_ONE\\\\\\\_CLASS\\\\\\\_SVM` odpowiadają najlepszym konfiguracjom z aktualnego przebiegu. Następnie można uruchomić:
-
-```bash
-python walidacja\\\\\\\_modeli\\\\\\\_jednoklasowych\\\\\\\_cv10.py
-```
-
-### 7\. Końcowe eksperymenty z reprezentacją tekstową
-
-Przed uruchomieniem należy sprawdzić parametry końcowego wywołania znajdującego się na dole każdego pliku. Następnie należy wykonać:
-
-```bash
-python model\\\\\\\_rand\\\\\\\_forest\\\\\\\_tfidf\\\\\\\_ngram.py
-python model\\\\\\\_iforest\\\\\\\_tfidf\\\\\\\_2gram\\\\\\\_svd.py
-python model\\\\\\\_ocsvm\\\\\\\_tfidf\\\\\\\_2gram\\\\\\\_svd.py
-```
-
-Skrypty końcowe powinny korzystać z:
-
-```text
-split\\\\\\\_type="group"
-```
-
-## Odtwarzalność eksperymentów
-
-* wspólne ziarno losowości: `42`;
-* zależności przypięte do konkretnych wersji;
-* zapisany podział grupowy;
-* kontrola `group\\\\\\\_overlap`;
-* selekcja cech wykonywana wyłącznie na treningu;
-* skalowanie dopasowywane wyłącznie do danych treningowych;
-* modele jednoklasowe uczone wyłącznie na próbkach normalnych;
-* wyniki zapisują rodzaj podziału oraz użyte parametry.
-
-Poprawność składni wszystkich modułów można dodatkowo sprawdzić poleceniem:
+### 1. Kontrola składni i protokołu
 
 ```bash
 python -m compileall -q .
+python -m unittest tests.test_protokol_eksperymentalny -v
 ```
+
+Oczekiwanym wynikiem drugiego polecenia jest osiem zaliczonych testów.
+
+Zapisany protokół należy traktować jako część zamrożonego eksperymentu. Nie należy go generować ponownie podczas zwykłego odtwarzania wyników. Nowy protokół tworzy się tylko dla świadomie rozpoczętego nowego eksperymentu, na przykład po zmianie danych lub definicji grupy.
+
+### 2. Ponowne wygenerowanie wyników development
+
+Polecenia należy uruchamiać w następującej kolejności:
+
+```bash
+python porownanie_podzialow_random_forest.py
+python analiza_niepewnosci.py
+python walidacja_selekcji_cech_random_forest_cv10.py
+python walidacja_modeli_jednoklasowych_cv10.py
+python porownanie_modeli_cv10.py
+```
+
+Każdy skrypt powinien potwierdzić, że `final_test` nie został użyty. `analiza_niepewnosci.py` wymaga predykcji OOF wygenerowanych przez porównanie podziałów, a `porownanie_modeli_cv10.py` wymaga predykcji OOF Random Forest i modeli jednoklasowych.
+
+### 3. Test implementacji końcowej
+
+```bash
+python ewaluacja.py --smoke-test
+```
+
+Polecenie wykorzystuje pierwszy fold `development`, nie zapisuje wyników końcowych i nie otwiera `final_test`.
+
+### 4. Jednorazowa ewaluacja final_test
+
+```bash
+python ewaluacja.py --run-final-test
+```
+
+To polecenie wolno wykonać dopiero po zamrożeniu wszystkich decyzji podjętych na `development`. Skrypt odmawia uruchomienia, jeżeli istnieje już którykolwiek z końcowych plików wynikowych.
+
+W bieżącym eksperymencie ocena `final_test` została już wykonana. Podczas końcowego odtwarzania analiz należy uruchomić ponownie wyłącznie eksperymenty `development` i wykorzystać zachowane pliki końcowe, bez ponownego wywoływania `--run-final-test`.
+
+### 5. Końcowy raport
+
+Po poprawnym przejściu testów i ponownym wygenerowaniu wyników `development` należy:
+
+1. sprawdzić kompletność i zgodność plików CSV;
+2. połączyć wyniki `development` z zachowanymi wynikami `final_test`;
+3. przygotować nowe tabele, wykresy i raport dla prowadzącego;
+4. jasno rozdzielić wyniki wyboru modelu od jednorazowej oceny końcowej.
+
+## Odtwarzalność i ograniczenia
+
+- `PROTOCOL_RANDOM_STATE = 2026` odpowiada wyłącznie za zapisany protokół podziału;
+- `RANDOM_STATE = 42` jest zachowany dla modeli i pomocniczych operacji losowych;
+- odcisk danych w pliku JSON wykrywa zmianę kolejności, grup lub etykiet rekordów;
+- wszystkie końcowe foldy są grupowe i mają `group_overlap = 0`;
+- selekcja cech, skalowanie i strojenie odbywają się bez użycia `final_test`;
+- modele jednoklasowe są dopasowywane wyłącznie do normalnych rekordów;
+- bootstrap losuje całe grupy żądań, a nie pojedyncze rekordy;
+- grupowanie usuwa przeciek dokładnych duplikatów, ale nie grupuje automatycznie żądań jedynie podobnych semantycznie.
 
 ## Interpretacja wyników
 
-Za podstawę końcowych wniosków należy przyjmować eksperymenty wykorzystujące podział grupowy. Wyniki z podziałów losowych pełnią funkcję bazową i eksploracyjną oraz powinny być jednoznacznie podpisane w pracy.
+Podstawą głównych wniosków są eksperymenty z podziałem grupowym i jednorazowa ocena `final_test`. Wyniki podziału losowego pełnią rolę kontrolną w RQ1 i pokazują wpływ przecieku duplikatów.
 
-W przypadku danych niezbalansowanych głównymi metrykami porównawczymi są:
+W przypadku niezbalansowanych danych najważniejsze są balanced accuracy, F1 dla anomalii, Average Precision, ROC AUC, FPR oraz TPR przy ustalonych wartościach FPR. Sama accuracy nie powinna być używana jako jedyne kryterium wyboru.
 
-* balanced accuracy;
-* F1 dla klasy anomalii;
-* ROC AUC;
-* Average Precision;
-* false positive rate.
+Random Forest i modele jednoklasowe działają w różnych warunkach informacyjnych. Porównanie ich wyników musi zawsze wskazywać, czy dotyczy scenariusza strict one-class, supervised-calibrated one-class czy klasyfikacji nadzorowanej.
 
-Sama accuracy nie powinna stanowić jedynego kryterium wyboru modelu.
+## Źródła
 
-## Źródła i materiały porównawcze
-
-Publikacje wykorzystane podczas projektowania cech i porównywania wyników znajdują się w katalogu:
-
-```text
-sources/
-```
-
-Archiwalne zestawienia wyników znajdują się w katalogu:
-
-```text
-result tables/
-```
-
-Materiały te służą do udokumentowania podstaw literaturowych, wcześniejszych etapów badań oraz porównania rezultatów projektu z innymi pracami wykorzystującymi zbiór CSIC 2010.
-
+Publikacje wykorzystane przy projektowaniu cech i eksperymentów znajdują się w katalogu `sources/`. Archiwalne materiały i wcześniejsze zestawienia wyników znajdują się w katalogu `result tables/` i nie powinny być mylone z wynikami wygenerowanymi przez aktualny protokół seed 2026.
