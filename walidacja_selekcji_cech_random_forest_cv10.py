@@ -176,16 +176,6 @@ def validate_with_cv10() -> None:
             "classification",
         ]
 
-        X_train_all = df.loc[
-            train_indices,
-            config.ML_FEATURES_ALTHUBITI_9,
-        ]
-
-        y_train = df.loc[
-            train_indices,
-            "classification",
-        ]
-
         train_groups = grouped_df.loc[
             train_indices,
             "request_group",
