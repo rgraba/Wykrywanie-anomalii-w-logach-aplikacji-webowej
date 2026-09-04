@@ -1,85 +1,66 @@
 import joblib
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 
 import config
-from data_processor import get_processed_data
+from protokol_eksperymentalny import (
+    get_development_indices,
+)
+from przetwarzanie_danych import get_processed_data
 
 
 def train_random_forest() -> None:
-    print("Wczytywanie danych...")
-
-    try:
-        df = get_processed_data()
-    except Exception as e:
-        print(f"Błąd podczas pobierania danych: {e}")
-        return
+    df = get_processed_data()
+    features = config.ML_FEATURES
 
     missing_features = [
-        feature for feature in config.ML_FEATURES
+        feature for feature in features
         if feature not in df.columns
     ]
 
     if missing_features:
-        print(f"Błąd: brakuje cech w danych: {missing_features}")
-        return
+        raise ValueError(
+            f"Brakuje cech w danych: {missing_features}"
+        )
 
-    if "classification" not in df.columns:
-        print("Błąd: brakuje kolumny 'classification' w danych.")
-        return
+    development_indices = get_development_indices(df)
 
-    print("Wyodrębnianie cech i etykiet...")
-
-    X = df[config.ML_FEATURES]
-    y = df["classification"]
-
-    print("Dzielenie danych na zbiór treningowy i testowy...")
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=config.TEST_SIZE,
-        random_state=config.RANDOM_STATE,
-        stratify=y
-    )
-
-    print(f"Rozmiar zbioru treningowego: {X_train.shape[0]} próbek.")
-    print(f"Rozmiar zbioru testowego: {X_test.shape[0]} próbek.")
-
-    print("Inicjalizacja modelu Random Forest...")
+    X_train = df.loc[development_indices, features]
+    y_train = df.loc[development_indices, "classification"]
 
     model = RandomForestClassifier(
         **config.RANDOM_FOREST_PARAMS,
-        random_state=config.RANDOM_STATE
+        random_state=config.RANDOM_STATE,
+        n_jobs=-1,
     )
 
-    print("Trenowanie modelu...")
+    print("Trenowanie Random Forest na części development...")
     model.fit(X_train, y_train)
-    print("Trening modelu zakończony.")
+
+    artifact = {
+        "model": model,
+        "model_name": "Random Forest",
+        "features": list(features),
+        "parameters": {
+            **config.RANDOM_FOREST_PARAMS,
+            "random_state": config.RANDOM_STATE,
+        },
+        "training_partition": "development",
+        "training_samples": len(development_indices),
+        "protocol_seed": config.PROTOCOL_RANDOM_STATE,
+    }
 
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    model_path = config.MODELS_DIR / "rf_model.pkl"
-    test_data_path = config.MODELS_DIR / "test_data_rf.pkl"
-
-    joblib.dump(model, model_path)
-    joblib.dump((X_test, y_test), test_data_path)
-
-    print(f"Model zapisany jako: {model_path}")
-    print(f"Zbiór testowy zapisany jako: {test_data_path}")
-
-    print("\nZnaczenie cech w modelu Random Forest:")
-
-    feature_importance = sorted(
-        zip(config.ML_FEATURES, model.feature_importances_),
-        key=lambda item: item[1],
-        reverse=True
+    model_path = (
+        config.MODELS_DIR
+        / "rf_model_development.pkl"
     )
 
-    for feature, importance in feature_importance:
-        print(f"{feature}: {importance:.4f}")
+    joblib.dump(artifact, model_path)
 
-    print("\nZakończono proces.")
+    print(f"Model zapisano w: {model_path}")
+    print(f"Liczba próbek treningowych: {len(development_indices)}")
+    print("Zbiór final_test nie został użyty.")
 
 
 if __name__ == "__main__":

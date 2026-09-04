@@ -1,85 +1,88 @@
 import joblib
-from sklearn.svm import OneClassSVM
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import OneClassSVM
 
 import config
-from data_processor import get_processed_data
+from protokol_eksperymentalny import (
+    get_development_indices,
+)
+from przetwarzanie_danych import get_processed_data
 
 
 def train_ocsvm() -> None:
-    print("Wczytywanie danych...")
-
-    try:
-        df = get_processed_data()
-    except Exception as e:
-        print(f"Błąd podczas pobierania danych: {e}")
-        return
+    df = get_processed_data()
+    features = config.ML_FEATURES
 
     missing_features = [
-        feature for feature in config.ML_FEATURES
+        feature for feature in features
         if feature not in df.columns
     ]
 
     if missing_features:
-        print(f"Błąd: brakuje cech w danych: {missing_features}")
-        return
+        raise ValueError(
+            f"Brakuje cech w danych: {missing_features}"
+        )
 
-    if "classification" not in df.columns:
-        print("Błąd: brakuje kolumny 'classification' w danych.")
-        return
+    development_indices = get_development_indices(df)
 
-    print("Wyodrębnianie cech i etykiet...")
+    X_development = df.loc[
+        development_indices,
+        features,
+    ]
 
-    X = df[config.ML_FEATURES]
-    y = df["classification"]
+    y_development = df.loc[
+        development_indices,
+        "classification",
+    ]
 
-    print("\nRozkład klas w całym zbiorze:")
-    print(y.value_counts())
+    X_train_normal = X_development.loc[
+        y_development == 0
+    ]
 
-    print("\nRozkład klas procentowo:")
-    print(y.value_counts(normalize=True).round(4))
-
-    print("\nDzielenie danych na zbiór treningowy i testowy...")
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=config.TEST_SIZE,
-        random_state=config.RANDOM_STATE,
-        stratify=y
+    model = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            (
+                "ocsvm",
+                OneClassSVM(
+                    **config.OCSVM_PARAMS
+                ),
+            ),
+        ]
     )
 
-    X_train_normal = X_train[y_train == 0]
+    print(
+        "Trenowanie One-Class SVM na normalnych "
+        "próbkach części development..."
+    )
 
-    print(f"Rozmiar zbioru treningowego: {X_train.shape[0]} próbek.")
-    print(f"Rozmiar zbioru testowego: {X_test.shape[0]} próbek.")
-    print(f"Liczba normalnych próbek użytych do treningu: {X_train_normal.shape[0]}.")
-
-    print("\nInicjalizacja modelu One-Class SVM z użyciem StandardScaler...")
-
-    model = Pipeline([
-        ("scaler", StandardScaler()),
-        ("ocsvm", OneClassSVM(**config.OCSVM_PARAMS))
-    ])
-
-    print("Trenowanie modelu na próbkach normalnych...")
     model.fit(X_train_normal)
-    print("Trening modelu zakończony.")
+
+    artifact = {
+        "model": model,
+        "model_name": "One-Class SVM",
+        "features": list(features),
+        "parameters": dict(config.OCSVM_PARAMS),
+        "training_partition": "development_normal_only",
+        "development_samples": len(development_indices),
+        "normal_training_samples": len(X_train_normal),
+        "protocol_seed": config.PROTOCOL_RANDOM_STATE,
+    }
 
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    model_path = config.MODELS_DIR / "ocsvm_model.pkl"
-    test_data_path = config.MODELS_DIR / "test_data_oc.pkl"
+    model_path = (
+        config.MODELS_DIR
+        / "ocsvm_model_development.pkl"
+    )
 
-    joblib.dump(model, model_path)
-    joblib.dump((X_test, y_test), test_data_path)
+    joblib.dump(artifact, model_path)
 
-    print(f"Model zapisany jako: {model_path}")
-    print(f"Zbiór testowy zapisany jako: {test_data_path}")
-
-    print("\nZakończono proces.")
+    print(f"Model zapisano w: {model_path}")
+    print(f"Próbki development: {len(development_indices)}")
+    print(f"Normalne próbki treningowe: {len(X_train_normal)}")
+    print("Zbiór final_test nie został użyty.")
 
 
 if __name__ == "__main__":

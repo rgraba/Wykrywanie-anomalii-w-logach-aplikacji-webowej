@@ -1,21 +1,25 @@
+import sys
 import joblib
-import pandas as pd
 import matplotlib.pyplot as plt
+import pandas as pd
 import seaborn as sns
 
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
-    accuracy_score,
-    balanced_accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
+    roc_auc_score,
     roc_curve,
-    roc_auc_score
 )
 
 import config
+from metryki import (
+    calculate_binary_metrics,
+    convert_one_class_predictions,
+)
+
+"""
+Poprzednia ewaluacja modeli dla losowego podziału rekordów 80/20.
+"""
 
 MODELS_TO_EVALUATE = {
     "Isolation Forest": {
@@ -35,6 +39,8 @@ MODELS_TO_EVALUATE = {
     }
 }
 
+SPLIT_TYPE = "random"
+SPLIT_LABEL = "Podział losowy 80/20"
 
 def load_model_and_test_data(model_file: str, test_file: str):
     model_path = config.MODELS_DIR / model_file
@@ -47,14 +53,14 @@ def load_model_and_test_data(model_file: str, test_file: str):
 
 
 def predict_labels(model, X_test, model_type: str):
-    # 0: normalny ruch, 1: anomalia / atak.
 
     if model_type == "classifier":
         return model.predict(X_test)
 
     if model_type == "anomaly":
-        raw_predictions = model.predict(X_test)
-        return [1 if pred == -1 else 0 for pred in raw_predictions]
+        return convert_one_class_predictions(
+            model.predict(X_test)
+        )
 
     raise ValueError(f"Nieznany typ modelu: {model_type}")
 
@@ -81,38 +87,33 @@ def get_model_scores(model, X_test, model_type: str):
     raise ValueError(f"Nieznany typ modelu: {model_type}")
 
 
-def calculate_metrics(model_name: str, y_true, y_pred, y_score=None) -> dict:
-    metrics = {
+def calculate_metrics(
+    model_name: str,
+    y_true,
+    y_pred,
+    y_score,
+) -> dict:
+    raw_metrics = calculate_binary_metrics(
+        y_true,
+        y_pred,
+        y_score,
+    )
+
+    return {
         "Model": model_name,
-        "Accuracy": accuracy_score(y_true, y_pred),
-        "Balanced Accuracy": balanced_accuracy_score(y_true, y_pred),
-        "Precision (Anomaly)": precision_score(
-            y_true,
-            y_pred,
-            pos_label=1,
-            zero_division=0
-        ),
-        "Recall (Anomaly)": recall_score(
-            y_true,
-            y_pred,
-            pos_label=1,
-            zero_division=0
-        ),
-        "F1-Score (Anomaly)": f1_score(
-            y_true,
-            y_pred,
-            pos_label=1,
-            zero_division=0
-        )
+        "Accuracy": raw_metrics["accuracy"],
+        "Balanced Accuracy": raw_metrics["balanced_accuracy"],
+        "Precision (Anomaly)": raw_metrics["precision_anomaly"],
+        "Recall (Anomaly)": raw_metrics["recall_anomaly"],
+        "F1-Score (Anomaly)": raw_metrics["f1_anomaly"],
+        "Specificity": raw_metrics["specificity"],
+        "False Positive Rate": raw_metrics["false_positive_rate"],
+        "ROC AUC": raw_metrics["roc_auc"],
+        "PR AUC": raw_metrics["pr_auc"],
+        "Split": SPLIT_TYPE,
+        "Protokół": SPLIT_LABEL,
+        "Seed": config.RANDOM_STATE,
     }
-
-    if y_score is not None:
-        try:
-            metrics["ROC AUC"] = roc_auc_score(y_true, y_score)
-        except ValueError:
-            metrics["ROC AUC"] = None
-
-    return metrics
 
 
 def plot_confusion_matrices(results: dict) -> None:
@@ -136,17 +137,20 @@ def plot_confusion_matrices(results: dict) -> None:
             fmt="d",
             cmap="Blues",
             ax=ax,
-            xticklabels=["Normal", "Anomaly"],
-            yticklabels=["Normal", "Anomaly"]
+            xticklabels=["Normalny", "Anomalia"],
+            yticklabels=["Normalny", "Anomalia"]
         )
 
-        ax.set_title(f"Macierz pomyłek: {model_name}")
+        ax.set_title(
+            f"Macierz pomyłek: {model_name}\n"
+            f"{SPLIT_LABEL}"
+        )
         ax.set_xlabel("Przewidywana klasa")
         ax.set_ylabel("Rzeczywista klasa")
 
     plt.tight_layout()
 
-    output_path = config.REPORTS_DIR / "confusion_matrices.png"
+    output_path = config.REPORTS_DIR / "confusion_matrices_random_80_20.png"
     plt.savefig(output_path, dpi=300)
     plt.show()
 
@@ -181,22 +185,26 @@ def plot_roc_curves(results: dict) -> None:
 
     plt.plot([0, 1], [0, 1], linestyle="--", label="Losowy klasyfikator")
 
-    plt.xlabel("False Positive Rate")
-    plt.ylabel("True Positive Rate")
-    plt.title("Krzywe ROC dla modeli")
+    plt.xlabel("Odsetek fałszywie dodatnich (FPR)")
+    plt.ylabel("Odsetek prawdziwie dodatnich (TPR)")
+    plt.title(
+        "Krzywe ROC dla modeli\n"
+        f"{SPLIT_LABEL}"
+    )
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
 
-    output_path = config.REPORTS_DIR / "roc_curves.png"
-    plt.savefig(output_path, dpi=300)
+    output_path = config.REPORTS_DIR / "roc_curves_random_80_20.png"
+    plt.savefig(output_path, dpi=300, bbox_inches = "tight")
     plt.show()
+    plt.close()
 
     print(f"Krzywe ROC zapisano jako: {output_path}")
 
 
 def evaluate_models() -> None:
-    print("Rozpoczynanie ewaluacji modeli...")
+    print("Rozpoczęto ewaluację modeli.")
 
     config.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -258,7 +266,7 @@ def evaluate_models() -> None:
     print("\nPODSUMOWANIE METRYK")
     print(summary_df.round(4).to_string(index=False))
 
-    metrics_path = config.REPORTS_DIR / "metrics_summary.csv"
+    metrics_path = config.REPORTS_DIR / "metrics_summary_random_80_20.csv"
     summary_df.to_csv(metrics_path, index=False)
 
     print(f"\nTabela metryk zapisana jako: {metrics_path}")
@@ -270,4 +278,10 @@ def evaluate_models() -> None:
 
 
 if __name__ == "__main__":
+    if "--allow-legacy-evaluation" not in sys.argv:
+        raise RuntimeError(
+            "To jest nieaktualna ewaluacja losowego podziału 80/20. "
+            "aby uruchomić skrypt: --allow-legacy-evaluation."
+        )
+
     evaluate_models()

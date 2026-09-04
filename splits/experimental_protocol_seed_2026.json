@@ -1,0 +1,21 @@
+{
+  "protocol_version": 1,
+  "dataset_fingerprint": "200917c87d9af57626738d1f9c11a2203339668de7410f7f513319821ebf3fcf",
+  "group_definition": "SHA-256(JSON([Method, URL, content]))",
+  "protocol_random_state": 2026,
+  "final_test_n_splits": 5,
+  "development_cv_n_splits": 10,
+  "total_records": 61065,
+  "development_records": 48852,
+  "final_test_records": 12213,
+  "group_audit": {
+    "total_records": 61065,
+    "unique_groups": 25608,
+    "duplicate_records": 35457,
+    "records_in_duplicate_groups": 37361,
+    "duplicate_groups": 1904,
+    "maximum_group_size": 1000,
+    "mixed_label_groups": 0,
+    "hash_collisions": 0
+  }
+}
